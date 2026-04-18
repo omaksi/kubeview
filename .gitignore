@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+Package.resolved
+build/
+*.dmg
+*.zip
+.DS_Store
+xcuserdata/
+*.xcworkspace/xcuserdata/

@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
+
+      - name: Build universal binary
+        run: |
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+          mkdir -p build
+          lipo -create -output build/KubeView \
+            .build/arm64-apple-macosx/release/KubeView \
+            .build/x86_64-apple-macosx/release/KubeView
+          lipo -info build/KubeView
+
+      - name: Bundle .app
+        run: |
+          APP="build/KubeView.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp build/KubeView "$APP/Contents/MacOS/KubeView"
+          chmod +x "$APP/Contents/MacOS/KubeView"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>KubeView</string>
+              <key>CFBundleDisplayName</key><string>KubeView</string>
+              <key>CFBundleIdentifier</key><string>com.omaksi.kubeview</string>
+              <key>CFBundleVersion</key><string>${{ steps.ver.outputs.version }}</string>
+              <key>CFBundleShortVersionString</key><string>${{ steps.ver.outputs.version }}</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleExecutable</key><string>KubeView</string>
+              <key>LSMinimumSystemVersion</key><string>14.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+              <key>NSPrincipalClass</key><string>NSApplication</string>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Ad-hoc sign
+        run: codesign --force --deep --sign - build/KubeView.app
+
+      - name: Create zip
+        id: zip
+        run: |
+          cd build
+          ZIP="KubeView-${{ steps.ver.outputs.tag }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent KubeView.app "$ZIP"
+          SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "## SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "build/${{ steps.zip.outputs.zip }}" \
+            --title "KubeView ${{ steps.ver.outputs.tag }}" \
+            --notes "SHA256: \`${{ steps.zip.outputs.sha256 }}\`
+
+          Install via tap:
+          \`\`\`
+          brew tap omaksi/kubeview
+          brew install --cask kubeview --no-quarantine
+          \`\`\`"
+
+      - name: Update Homebrew tap
+        if: ${{ secrets.TAP_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          TAG="${{ steps.ver.outputs.tag }}"
+          SHA="${{ steps.zip.outputs.sha256 }}"
+          URL="https://github.com/omaksi/kubeview/releases/download/${TAG}/${{ steps.zip.outputs.zip }}"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/omaksi/homebrew-kubeview.git" tap
+          cd tap
+          mkdir -p Casks
+          cat > Casks/kubeview.rb <<RUBY
+          cask "kubeview" do
+            version "${VERSION}"
+            sha256 "${SHA}"
+
+            url "${URL}"
+            name "KubeView"
+            desc "Native macOS desktop app for viewing Kubernetes clusters"
+            homepage "https://github.com/omaksi/kubeview"
+
+            depends_on formula: "kubernetes-cli"
+            depends_on macos: ">= :sonoma"
+
+            app "KubeView.app"
+
+            zap trash: [
+              "~/Library/Preferences/com.omaksi.kubeview.plist",
+            ]
+          end
+          RUBY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/kubeview.rb
+          git commit -m "kubeview ${VERSION}"
+          git push
