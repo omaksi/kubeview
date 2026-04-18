@@ -15,6 +15,8 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -106,7 +108,7 @@ jobs:
           \`\`\`"
 
       - name: Update Homebrew tap
-        if: ${{ secrets.TAP_TOKEN != '' }}
+        if: env.HAS_TAP_TOKEN == 'true'
         env:
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
