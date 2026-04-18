@@ -80,6 +80,17 @@ The `release.yml` workflow on `macos-14`:
    version + SHA, commits and pushes. Requires `TAP_TOKEN` secret (PAT with
    `repo` scope on the tap repo).
 
+### Workflow gotchas
+
+- **`secrets` context is NOT usable in step-level `if:` conditions.** Map to a
+  job-level env var first: `env: { HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }} }`,
+  then check `if: env.HAS_TAP_TOKEN == 'true'`. Writing `if: ${{ secrets.X != '' }}`
+  makes the whole workflow file invalid — it fails *before* any job starts, with
+  no logs, and GitHub just says "workflow file issue."
+- **Don't delete and recreate a tag** to retry a failed release. Tag forward to
+  the next patch (`v0.1.1`) instead — preserves history and avoids surprising
+  anyone who already saw the failed release.
+
 ### Upgrading to notarization
 
 When an Apple Developer account is available:
