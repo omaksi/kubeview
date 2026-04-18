@@ -29,15 +29,43 @@ struct PodDetailView: View {
     @EnvironmentObject var store: ClusterStore
     @EnvironmentObject var emojis: EmojiStore
     @StateObject private var eventsLoader = PodEventsLoader()
+    @State private var tab: PodDetailTab = .overview
 
     private var pod: Pod? {
         store.pods.first { $0.namespace == route.namespace && $0.name == route.name }
     }
 
+    private var containerNames: [String] {
+        guard let p = pod else { return [] }
+        let main = (p.spec?.containers ?? []).map(\.name)
+        let inits = (p.spec?.initContainers ?? []).map(\.name)
+        return main + inits
+    }
+
     var body: some View {
         Group {
             if let pod {
-                content(for: pod)
+                VStack(spacing: 0) {
+                    header(for: pod)
+                        .padding(.horizontal)
+                        .padding(.top)
+                    Picker("", selection: $tab) {
+                        ForEach(PodDetailTab.allCases) { t in
+                            Label(t.title, systemImage: t.icon).tag(t)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+
+                    Divider()
+
+                    switch tab {
+                    case .overview: overviewBody(for: pod)
+                    case .logs:     PodLogsView(route: route, containers: containerNames)
+                    case .describe: PodDescribeView(route: route)
+                    }
+                }
             } else {
                 ContentUnavailableView("Pod not found",
                                        systemImage: "shippingbox",
@@ -51,10 +79,9 @@ struct PodDetailView: View {
     }
 
     @ViewBuilder
-    private func content(for pod: Pod) -> some View {
+    private func overviewBody(for pod: Pod) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                header(for: pod)
                 summaryCard(for: pod)
                 containersSection(pod: pod)
                 if let inits = pod.spec?.initContainers, !inits.isEmpty {
@@ -94,10 +121,7 @@ struct PodDetailView: View {
             Spacer()
         }
         .padding(14)
-        .background(
-            NamespacePalette.color(for: pod.namespace).opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 12)
-        )
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func summaryCard(for pod: Pod) -> some View {

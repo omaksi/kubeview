@@ -18,7 +18,7 @@ struct PodsView: View {
             FilterBar(text: $filter,
                       placeholder: "Filter pods by name or namespace",
                       count: filtered.count,
-                      trailing: AnyView(ViewModeToggle(mode: $mode)))
+                      trailing: { ViewModeToggle(mode: $mode) })
             switch mode {
             case .cards: cards
             case .table: table
@@ -31,8 +31,7 @@ struct PodsView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { pod in
                     NavigationLink(value: PodRoute(namespace: pod.namespace, name: pod.name)) {
-                        ResourceCard(ref: .pod(pod.namespace, pod.name),
-                                     namespaceForTint: pod.namespace) {
+                        ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
                             VStack(alignment: .leading, spacing: 6) {
                                 PodCardBody(pod: pod)
                                 Text(pod.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

@@ -20,7 +20,7 @@ struct ServicesView: View {
             FilterBar(text: $filter,
                       placeholder: "Filter services",
                       count: filtered.count,
-                      trailing: AnyView(ViewModeToggle(mode: $mode)))
+                      trailing: { ViewModeToggle(mode: $mode) })
             switch mode {
             case .cards: cards
             case .table: table
@@ -32,8 +32,7 @@ struct ServicesView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { svc in
-                    ResourceCard(ref: .service(svc.namespace, svc.name),
-                                 namespaceForTint: svc.namespace) {
+                    ResourceCard(ref: .service(svc.namespace, svc.name)) {
                         VStack(alignment: .leading, spacing: 6) {
                             ServiceCardBody(service: svc)
                             Text(svc.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

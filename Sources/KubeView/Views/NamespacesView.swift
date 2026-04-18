@@ -15,16 +15,15 @@ struct NamespacesView: View {
         VStack(spacing: 0) {
             FilterBar(text: $filter,
                       placeholder: "Filter namespaces",
-                      count: filtered.count,
-                      trailing: AnyView(
-                        HStack(spacing: 8) {
-                            if !store.metricsAvailable {
-                                Label("metrics unavailable", systemImage: "exclamationmark.triangle")
-                                    .font(.caption).foregroundStyle(.orange).labelStyle(.titleAndIcon)
-                            }
-                            ViewModeToggle(mode: $mode)
-                        }
-                      ))
+                      count: filtered.count) {
+                HStack(spacing: 8) {
+                    if !store.metricsAvailable {
+                        Label("metrics unavailable", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                    }
+                    ViewModeToggle(mode: $mode)
+                }
+            }
             switch mode {
             case .cards: cards
             case .table: table

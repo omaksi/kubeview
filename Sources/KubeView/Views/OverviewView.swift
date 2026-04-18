@@ -7,6 +7,9 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 statCards
+                if !store.unhealthyAll.isEmpty {
+                    unhealthySection
+                }
                 nodesSection
                 namespacesSection
                 if let err = store.lastError {
@@ -20,9 +23,18 @@ struct OverviewView: View {
         }
     }
 
+    private var unhealthySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Unhealthy", trailing: "\(store.unhealthyAll.count) items")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
+                ForEach(store.unhealthyAll) { item in UnhealthyCard(item: item) }
+            }
+        }
+    }
+
     private var statCards: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-            StatCard(label: "Context", value: store.currentContext.isEmpty ? "—" : store.currentContext,
+            StatCard(label: "Context", value: store.context,
                      icon: "point.3.connected.trianglepath.dotted", color: .blue)
             StatCard(label: "Nodes Ready", value: "\(store.nodesReady)/\(store.nodes.count)",
                      icon: "server.rack", color: store.nodesReady == store.nodes.count ? .green : .orange)
@@ -79,6 +91,51 @@ struct OverviewView: View {
                 }
             }
         }
+    }
+}
+
+struct UnhealthyCard: View {
+    let item: UnhealthyItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .foregroundStyle(color)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(item.kind).font(.caption2).foregroundStyle(.secondary)
+                    Text(item.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
+                Text(item.name).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                Text(item.reason).font(.caption).foregroundStyle(color)
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(color.opacity(0.4), lineWidth: 0.5)
+        )
+    }
+
+    private var iconName: String {
+        switch item.kind {
+        case "Pod": return "shippingbox"
+        case "Deployment": return "square.grid.2x2"
+        case "StatefulSet": return "cylinder.split.1x2"
+        case "ReplicaSet": return "rectangle.stack"
+        case "Job": return "hammer"
+        default: return "exclamationmark.triangle"
+        }
+    }
+
+    private var color: Color {
+        // Crash/image backoff → red, rest → orange
+        let critical: Set<String> = ["CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
+                                      "Failed", "Error", "CreateContainerConfigError"]
+        return critical.contains(item.reason) ? .red : .orange
     }
 }
 
@@ -199,7 +256,7 @@ struct NamespaceCard: View {
 
     var body: some View {
         NavigationLink(value: NamespaceRoute(name: ns.name)) {
-            ResourceCard(ref: .namespace(ns.name), namespaceForTint: ns.name) {
+            ResourceCard(ref: .namespace(ns.name), navigable: true) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Text(emojis.emoji(for: .namespace(ns.name)) ?? "")
@@ -208,14 +265,15 @@ struct NamespaceCard: View {
                             .font(.system(.headline, design: .monospaced))
                             .lineLimit(1)
                         Spacer()
-                        if ns.failingCount > 0 {
-                            Label("\(ns.failingCount)", systemImage: "exclamationmark.triangle.fill")
+                        if ns.unhealthyCount > 0 {
+                            Label("\(ns.unhealthyCount)", systemImage: "exclamationmark.triangle.fill")
                                 .labelStyle(.titleAndIcon)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(ns.failingCount > 0 ? .red : .orange)
                                 .font(.caption)
                         }
-                        Image(systemName: "chevron.right")
-                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !ns.unhealthyWorkloads.isEmpty || ns.failingCount > 0 {
+                        unhealthyList
                     }
                     HStack(spacing: 12) {
                         counter("Pods", "\(ns.runningCount)/\(ns.podCount)")
@@ -233,6 +291,26 @@ struct NamespaceCard: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private var unhealthyList: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(ns.unhealthyWorkloads.prefix(3)) { w in
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2).foregroundStyle(.orange)
+                    Text("\(w.kind)/\(w.name)")
+                        .font(.caption.monospaced())
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Text(w.reason).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            if ns.unhealthyWorkloads.count > 3 {
+                Text("+\(ns.unhealthyWorkloads.count - 3) more")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func counter(_ label: String, _ value: String) -> some View {

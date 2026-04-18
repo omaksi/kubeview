@@ -24,17 +24,18 @@ struct ViewModeToggle: View {
     }
 }
 
-struct FilterBar: View {
+struct FilterBar<Trailing: View>: View {
     @Binding var text: String
     let placeholder: String
     let count: Int
-    let trailing: AnyView?
+    let trailing: Trailing
 
-    init(text: Binding<String>, placeholder: String, count: Int, trailing: AnyView? = nil) {
+    init(text: Binding<String>, placeholder: String, count: Int,
+         @ViewBuilder trailing: () -> Trailing) {
         self._text = text
         self.placeholder = placeholder
         self.count = count
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     var body: some View {
@@ -42,10 +43,16 @@ struct FilterBar: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField(placeholder, text: $text).textFieldStyle(.plain)
             Spacer()
-            if let trailing { trailing }
+            trailing
             Text("\(count)").foregroundStyle(.secondary).font(.caption)
         }
         .padding(8)
         .background(.bar)
+    }
+}
+
+extension FilterBar where Trailing == EmptyView {
+    init(text: Binding<String>, placeholder: String, count: Int) {
+        self.init(text: text, placeholder: placeholder, count: count) { EmptyView() }
     }
 }

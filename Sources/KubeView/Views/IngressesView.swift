@@ -58,7 +58,7 @@ struct IngressesView: View {
             FilterBar(text: $filter,
                       placeholder: "Filter by host, name, service",
                       count: mode == .cards ? filteredIngresses.count : rows.count,
-                      trailing: AnyView(ViewModeToggle(mode: $mode)))
+                      trailing: { ViewModeToggle(mode: $mode) })
             switch mode {
             case .cards: cards
             case .table: table
@@ -70,8 +70,7 @@ struct IngressesView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                 ForEach(filteredIngresses) { ing in
-                    ResourceCard(ref: .ingress(ing.namespace, ing.name),
-                                 namespaceForTint: ing.namespace) {
+                    ResourceCard(ref: .ingress(ing.namespace, ing.name)) {
                         VStack(alignment: .leading, spacing: 6) {
                             IngressCardBody(ingress: ing)
                             Text(ing.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

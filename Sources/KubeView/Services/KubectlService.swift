@@ -16,17 +16,23 @@ enum KubectlError: Error, LocalizedError {
 
 actor KubectlService {
     private let binary: String
+    let context: String?
 
-    init() {
+    init(context: String? = nil) {
         let candidates = [
             "/opt/homebrew/bin/kubectl",
             "/usr/local/bin/kubectl",
             "/usr/bin/kubectl"
         ]
         self.binary = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "kubectl"
+        self.context = context
     }
 
     func run(_ args: [String]) async throws -> Data {
+        var args = args
+        if let ctx = context, !args.contains("--context") {
+            args = ["--context", ctx] + args
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = args
@@ -73,9 +79,6 @@ actor KubectlService {
         return text.split(separator: "\n").map { KubeContext(name: String($0)) }
     }
 
-    func switchContext(_ name: String) async throws {
-        _ = try await run(["config", "use-context", name])
-    }
 
     func pods(namespace: String? = nil, allNamespaces: Bool = true) async throws -> [Pod] {
         var args = ["get", "pods", "-o", "json"]
@@ -103,6 +106,100 @@ actor KubectlService {
     func services() async throws -> [Service] {
         let data = try await run(["get", "services", "--all-namespaces", "-o", "json"])
         return try decode(ServiceList.self, from: data).items
+    }
+
+    func secrets() async throws -> [Secret] {
+        let data = try await run(["get", "secrets", "--all-namespaces", "-o", "json"])
+        return try decode(SecretList.self, from: data).items
+    }
+
+    func pvcs() async throws -> [PVC] {
+        let data = try await run(["get", "pvc", "--all-namespaces", "-o", "json"])
+        return try decode(PVCList.self, from: data).items
+    }
+
+    func storageClasses() async throws -> [StorageClass] {
+        let data = try await run(["get", "storageclasses", "-o", "json"])
+        return try decode(StorageClassList.self, from: data).items
+    }
+
+    func networkPolicies() async throws -> [NetworkPolicy] {
+        let data = try await run(["get", "networkpolicies", "--all-namespaces", "-o", "json"])
+        return try decode(NetworkPolicyList.self, from: data).items
+    }
+
+    func serviceAccounts() async throws -> [ServiceAccount] {
+        let data = try await run(["get", "serviceaccounts", "--all-namespaces", "-o", "json"])
+        return try decode(ServiceAccountList.self, from: data).items
+    }
+
+    func deployments() async throws -> [Deployment] {
+        let data = try await run(["get", "deployments", "--all-namespaces", "-o", "json"])
+        return try decode(DeploymentList.self, from: data).items
+    }
+
+    func statefulSets() async throws -> [StatefulSet] {
+        let data = try await run(["get", "statefulsets", "--all-namespaces", "-o", "json"])
+        return try decode(StatefulSetList.self, from: data).items
+    }
+
+    func replicaSets() async throws -> [ReplicaSet] {
+        let data = try await run(["get", "replicasets", "--all-namespaces", "-o", "json"])
+        return try decode(ReplicaSetList.self, from: data).items
+    }
+
+    func jobs() async throws -> [KubeJob] {
+        let data = try await run(["get", "jobs", "--all-namespaces", "-o", "json"])
+        return try decode(JobList.self, from: data).items
+    }
+
+    func cronJobs() async throws -> [CronJob] {
+        let data = try await run(["get", "cronjobs", "--all-namespaces", "-o", "json"])
+        return try decode(CronJobList.self, from: data).items
+    }
+
+    func daemonSets() async throws -> [DaemonSet] {
+        let data = try await run(["get", "daemonsets", "--all-namespaces", "-o", "json"])
+        return try decode(DaemonSetList.self, from: data).items
+    }
+
+    func configMaps() async throws -> [ConfigMap] {
+        let data = try await run(["get", "configmaps", "--all-namespaces", "-o", "json"])
+        return try decode(ConfigMapList.self, from: data).items
+    }
+
+    func hpas() async throws -> [HPA] {
+        let data = try await run(["get", "hpa", "--all-namespaces", "-o", "json"])
+        return try decode(HPAList.self, from: data).items
+    }
+
+    /// Cluster-wide events. Expensive on busy clusters; fetch on demand.
+    func allEvents(warningsOnly: Bool = false) async throws -> [KubeEvent] {
+        var args = ["get", "events", "--all-namespaces", "-o", "json"]
+        if warningsOnly { args.append(contentsOf: ["--field-selector", "type=Warning"]) }
+        let data = try await run(args)
+        return try decode(EventList.self, from: data).items
+            .sorted { ($0.lastTimestamp ?? "") > ($1.lastTimestamp ?? "") }
+    }
+
+    func logs(namespace: String, pod: String, container: String?,
+              tailLines: Int = 500, previous: Bool = false) async throws -> String {
+        var args = ["logs", pod, "-n", namespace, "--tail=\(tailLines)"]
+        if let c = container { args.append(contentsOf: ["-c", c]) }
+        if previous { args.append("--previous") }
+        let data = try await run(args)
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    func describe(namespace: String, pod: String) async throws -> String {
+        try await describe(kind: "pod", name: pod, namespace: namespace)
+    }
+
+    func describe(kind: String, name: String, namespace: String?) async throws -> String {
+        var args = ["describe", kind, name]
+        if let ns = namespace { args.append(contentsOf: ["-n", ns]) }
+        let data = try await run(args)
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     func events(namespace: String, podName: String) async throws -> [KubeEvent] {

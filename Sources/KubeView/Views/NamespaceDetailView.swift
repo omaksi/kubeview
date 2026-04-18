@@ -21,7 +21,7 @@ struct NamespaceDetailView: View {
                     else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                             ForEach(ingresses) { ing in
-                                ResourceCard(ref: .ingress(ing.namespace, ing.name), namespaceForTint: name) {
+                                ResourceCard(ref: .ingress(ing.namespace, ing.name)) {
                                     IngressCardBody(ingress: ing)
                                 }
                             }
@@ -33,7 +33,7 @@ struct NamespaceDetailView: View {
                     else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                             ForEach(services) { svc in
-                                ResourceCard(ref: .service(svc.namespace, svc.name), namespaceForTint: name) {
+                                ResourceCard(ref: .service(svc.namespace, svc.name)) {
                                     ServiceCardBody(service: svc)
                                 }
                             }
@@ -46,7 +46,7 @@ struct NamespaceDetailView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                             ForEach(pods) { pod in
                                 NavigationLink(value: PodRoute(namespace: pod.namespace, name: pod.name)) {
-                                    ResourceCard(ref: .pod(pod.namespace, pod.name), namespaceForTint: name) {
+                                    ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
                                         PodCardBody(pod: pod)
                                     }
                                 }
@@ -64,7 +64,7 @@ struct NamespaceDetailView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
             RoundedRectangle(cornerRadius: 10)
-                .fill(NamespacePalette.color(for: name).opacity(0.25))
+                .fill(ResourceKind.namespace.accent.opacity(0.2))
                 .frame(width: 56, height: 56)
                 .overlay(
                     Text(emojis.emoji(for: .namespace(name)) ?? "📦").font(.system(size: 28))
@@ -127,7 +127,14 @@ struct PodCardBody: View {
                     .font(.system(.callout, design: .monospaced).weight(.semibold))
                     .lineLimit(1).truncationMode(.middle)
                 Spacer()
-                StatusBadge(text: pod.phase, color: PodCard.phaseColor(pod.phase))
+                if pod.isLinkerdMeshed {
+                    Image(systemName: "link")
+                        .font(.caption2)
+                        .foregroundStyle(.pink)
+                        .help("Linkerd meshed")
+                }
+                StatusBadge(text: pod.isFailing ? (pod.failureReason ?? pod.phase) : pod.phase,
+                            color: pod.isFailing ? .red : PodCard.phaseColor(pod.phase))
             }
             HStack(spacing: 12) {
                 mini("Ready", pod.readyRatio)

@@ -2,6 +2,7 @@
 .swiftpm/
 Package.resolved
 build/
+Resources/AppIcon.iconset/
 *.dmg
 *.zip
 .DS_Store
