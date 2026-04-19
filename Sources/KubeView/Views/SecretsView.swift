@@ -2,25 +2,16 @@ import SwiftUI
 
 struct SecretsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [Secret] {
-        guard !filter.isEmpty else { return store.secrets }
-        let q = filter.lowercased()
-        return store.secrets.filter {
-            $0.name.lowercased().contains(q) ||
-            $0.namespace.lowercased().contains(q) ||
-            ($0.type ?? "").lowercased().contains(q)
-        }
+        store.secrets.searchFiltered(search) { [$0.name, $0.namespace, $0.type ?? ""] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: "Filter secrets",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "secrets") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards: cards
             case .table: table
@@ -61,9 +52,7 @@ struct SecretCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(secret.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .init(kind: .secret, key: secret.id), name: secret.name)
                 Spacer()
                 StatusBadge(text: typeBadge, color: .red)
             }

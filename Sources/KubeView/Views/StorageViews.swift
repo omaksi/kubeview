@@ -2,22 +2,16 @@ import SwiftUI
 
 struct PVCsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [PVC] {
-        guard !filter.isEmpty else { return store.pvcs }
-        let q = filter.lowercased()
-        return store.pvcs.filter {
-            $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q)
-        }
+        store.pvcs.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter PVCs",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "PVCs") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
@@ -52,8 +46,7 @@ struct PVCCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(pvc.name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .init(kind: .pvc, key: pvc.id), name: pvc.name)
                 Spacer()
                 StatusBadge(text: pvc.phase, color: pvc.phase == "Bound" ? .green : .orange)
             }
@@ -97,7 +90,7 @@ struct StorageClassesView: View {
                         ForEach(store.storageClasses) { sc in
                             ResourceCard(ref: .init(kind: .storageClass, key: sc.name)) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(sc.name).font(.system(.callout, design: .monospaced).weight(.semibold))
+                                    ResourceTitle(ref: .init(kind: .storageClass, key: sc.name), name: sc.name)
                                     HStack(spacing: 4) {
                                         Image(systemName: "gear").font(.caption2).foregroundStyle(.secondary)
                                         Text(sc.provisioner ?? "-").font(.caption.monospaced()).foregroundStyle(.secondary)

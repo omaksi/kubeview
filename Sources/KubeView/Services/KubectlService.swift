@@ -73,6 +73,12 @@ actor KubectlService {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    func serverVersion() async throws -> String? {
+        let data = try await run(["version", "-o", "json"])
+        struct V: Decodable { let serverVersion: Inner?; struct Inner: Decodable { let gitVersion: String? } }
+        return (try? JSONDecoder().decode(V.self, from: data))?.serverVersion?.gitVersion
+    }
+
     func contexts() async throws -> [KubeContext] {
         let data = try await run(["config", "get-contexts", "-o", "name"])
         let text = String(data: data, encoding: .utf8) ?? ""

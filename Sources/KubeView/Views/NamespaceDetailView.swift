@@ -45,7 +45,7 @@ struct NamespaceDetailView: View {
                     else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                             ForEach(pods) { pod in
-                                NavigationLink(value: PodRoute(namespace: pod.namespace, name: pod.name)) {
+                                NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
                                     ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
                                         PodCardBody(pod: pod)
                                     }
@@ -58,7 +58,7 @@ struct NamespaceDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(name)
+        .navigationTitle("")
     }
 
     private var header: some View {
@@ -70,7 +70,14 @@ struct NamespaceDetailView: View {
                     Text(emojis.emoji(for: .namespace(name)) ?? "📦").font(.system(size: 28))
                 )
             VStack(alignment: .leading, spacing: 4) {
-                Text(name).font(.title2.monospaced().weight(.semibold))
+                HStack(spacing: 8) {
+                    Text(name).font(.title2.monospaced().weight(.semibold))
+                    Text("Namespace")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(ResourceKind.namespace.accent.opacity(0.18), in: Capsule())
+                        .foregroundStyle(ResourceKind.namespace.accent)
+                }
                 if let s = summary {
                     HStack(spacing: 14) {
                         miniStat("Pods", "\(s.runningCount)/\(s.podCount)")
@@ -123,9 +130,7 @@ struct PodCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(pod.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .pod(pod.namespace, pod.name), name: pod.name)
                 Spacer()
                 if pod.isLinkerdMeshed {
                     Image(systemName: "link")
@@ -163,9 +168,7 @@ struct ServiceCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(service.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .service(service.namespace, service.name), name: service.name)
                 Spacer()
                 StatusBadge(text: service.type, color: serviceTypeColor(service.type))
             }
@@ -200,30 +203,57 @@ struct ServiceCardBody: View {
     }
 }
 
+struct IngressPathLink: View {
+    let path: IngressPathSummary
+    let tls: Bool
+
+    private var url: URL? {
+        guard path.host != "*", !path.host.isEmpty else { return nil }
+        let scheme = tls ? "https" : "http"
+        return URL(string: "\(scheme)://\(path.host)\(path.path)")
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: tls ? "lock.fill" : "lock.open")
+                .font(.caption2).foregroundStyle(tls ? .green : .secondary)
+            if let url {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("\(path.host)\(path.path)")
+                            .font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+                        Image(systemName: "arrow.up.right.square").font(.caption2)
+                    }
+                    .foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+                .help("Open \(url.absoluteString) in browser")
+            } else {
+                Text("\(path.host)\(path.path)")
+                    .font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+            Text("\(path.serviceName):\(path.servicePort)")
+                .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+}
+
 struct IngressCardBody: View {
     let ingress: Ingress
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(ingress.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .ingress(ingress.namespace, ingress.name), name: ingress.name)
                 Spacer()
                 StatusBadge(text: ingress.className, color: .purple)
             }
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(ingress.paths, id: \.self) { p in
-                    HStack(spacing: 6) {
-                        Image(systemName: ingress.tlsHosts.contains(p.host) ? "lock.fill" : "lock.open")
-                            .font(.caption2)
-                            .foregroundStyle(ingress.tlsHosts.contains(p.host) ? .green : .secondary)
-                        Text("\(p.host)\(p.path)")
-                            .font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 4)
-                        Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
-                        Text("\(p.serviceName):\(p.servicePort)")
-                            .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                    IngressPathLink(path: p, tls: ingress.tlsHosts.contains(p.host))
                 }
                 if ingress.paths.isEmpty {
                     Text("(no rules)").font(.caption).foregroundStyle(.secondary)

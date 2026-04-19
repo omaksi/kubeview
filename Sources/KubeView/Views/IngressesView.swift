@@ -1,5 +1,10 @@
 import SwiftUI
 
+func ingressURL(host: String, path: String, tls: Bool) -> URL? {
+    guard host != "*", !host.isEmpty else { return nil }
+    return URL(string: "\(tls ? "https" : "http")://\(host)\(path)")
+}
+
 struct IngressRow: Identifiable, Hashable {
     let id: String
     let namespace: String
@@ -16,17 +21,12 @@ struct IngressRow: Identifiable, Hashable {
 
 struct IngressesView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filteredIngresses: [Ingress] {
-        guard !filter.isEmpty else { return store.ingresses }
-        let q = filter.lowercased()
-        return store.ingresses.filter { ing in
-            ing.name.lowercased().contains(q) ||
-            ing.namespace.lowercased().contains(q) ||
-            ing.hosts.contains(where: { $0.lowercased().contains(q) }) ||
-            ing.paths.contains(where: { $0.serviceName.lowercased().contains(q) })
+        store.ingresses.searchFiltered(search) { ing in
+            [ing.name, ing.namespace] + ing.hosts + ing.paths.map(\.serviceName)
         }
     }
 
@@ -55,10 +55,10 @@ struct IngressesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: "Filter by host, name, service",
-                      count: mode == .cards ? filteredIngresses.count : rows.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: mode == .cards ? filteredIngresses.count : rows.count,
+                       label: mode == .cards ? "ingresses" : "paths") {
+                ViewModeToggle(mode: $mode)
+            }
             switch mode {
             case .cards: cards
             case .table: table
@@ -93,7 +93,21 @@ struct IngressesView: View {
             TableColumn("Host") { row in
                 HStack(spacing: 4) {
                     if row.tls { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.green) }
-                    Text(row.host).font(.system(.body, design: .monospaced))
+                    if let url = ingressURL(host: row.host, path: row.path, tls: row.tls) {
+                        Button {
+                            NSWorkspace.shared.open(url)
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text(row.host).font(.system(.body, design: .monospaced))
+                                Image(systemName: "arrow.up.right.square").font(.caption2)
+                            }
+                            .foregroundStyle(.tint)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open in browser")
+                    } else {
+                        Text(row.host).font(.system(.body, design: .monospaced))
+                    }
                 }
             }.width(min: 160, ideal: 260)
             TableColumn("Path") { Text($0.path).font(.system(.body, design: .monospaced)) }

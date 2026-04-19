@@ -2,22 +2,16 @@ import SwiftUI
 
 struct NetworkPoliciesView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [NetworkPolicy] {
-        guard !filter.isEmpty else { return store.networkPolicies }
-        let q = filter.lowercased()
-        return store.networkPolicies.filter {
-            $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q)
-        }
+        store.networkPolicies.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter network policies",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "policies") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
@@ -26,8 +20,7 @@ struct NetworkPoliciesView: View {
                             ResourceCard(ref: .init(kind: .networkPolicy, key: np.id)) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack {
-                                        Text(np.name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                                            .lineLimit(1).truncationMode(.middle)
+                                        ResourceTitle(ref: .init(kind: .networkPolicy, key: np.id), name: np.name)
                                         Spacer()
                                         if !np.policyTypes.isEmpty {
                                             Text(np.policyTypes.joined(separator: "+"))

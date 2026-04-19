@@ -4,29 +4,25 @@ import SwiftUI
 
 struct DaemonSetsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [DaemonSet] {
-        guard !filter.isEmpty else { return store.daemonSets }
-        let q = filter.lowercased()
-        return store.daemonSets.filter {
-            $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q)
-        }
+        store.daemonSets.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter daemonsets",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "daemonsets") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                         ForEach(filtered) { ds in
-                            ResourceCard(ref: .init(kind: .daemonSet, key: ds.id)) {
+                            let ref = ResourceRef(kind: .daemonSet, key: ds.id)
+                            ResourceCard(ref: ref) {
                                 WorkloadCardBody(
+                                    ref: ref,
                                     name: ds.name, namespace: ds.namespace,
                                     desired: ds.desired, ready: ds.ready,
                                     kindLabel: "DaemonSet", strategy: nil,
@@ -56,22 +52,16 @@ struct DaemonSetsView: View {
 
 struct ConfigMapsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [ConfigMap] {
-        guard !filter.isEmpty else { return store.configMaps }
-        let q = filter.lowercased()
-        return store.configMaps.filter {
-            $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q)
-        }
+        store.configMaps.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter configmaps",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "configmaps") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
@@ -108,9 +98,7 @@ struct ConfigMapCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(configMap.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .init(kind: .configMap, key: configMap.id), name: configMap.name)
                 Spacer()
                 Text("\(configMap.textKeys.count + configMap.binaryKeys.count) keys")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -169,24 +157,16 @@ struct ConfigMapCardBody: View {
 
 struct HPAsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [HPA] {
-        guard !filter.isEmpty else { return store.hpas }
-        let q = filter.lowercased()
-        return store.hpas.filter {
-            $0.name.lowercased().contains(q) ||
-            $0.namespace.lowercased().contains(q) ||
-            $0.targetName.lowercased().contains(q)
-        }
+        store.hpas.searchFiltered(search) { [$0.name, $0.namespace, $0.targetName] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter HPAs",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "HPAs") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
@@ -195,8 +175,7 @@ struct HPAsView: View {
                             ResourceCard(ref: .init(kind: .hpa, key: h.id)) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack {
-                                        Text(h.name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                                            .lineLimit(1).truncationMode(.middle)
+                                        ResourceTitle(ref: .init(kind: .hpa, key: h.id), name: h.name)
                                         Spacer()
                                         StatusBadge(text: "\(h.currentReplicas)/\(h.desiredReplicas)",
                                                     color: replicasColor(h))

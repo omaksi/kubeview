@@ -2,23 +2,16 @@ import SwiftUI
 
 struct PodsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [Pod] {
-        guard !filter.isEmpty else { return store.pods }
-        let q = filter.lowercased()
-        return store.pods.filter {
-            $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q)
-        }
+        store.pods.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: "Filter pods by name or namespace",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "pods") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards: cards
             case .table: table
@@ -30,7 +23,7 @@ struct PodsView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { pod in
-                    NavigationLink(value: PodRoute(namespace: pod.namespace, name: pod.name)) {
+                    NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
                         ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
                             VStack(alignment: .leading, spacing: 6) {
                                 PodCardBody(pod: pod)

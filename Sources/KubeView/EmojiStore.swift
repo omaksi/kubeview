@@ -4,7 +4,7 @@ import SwiftUI
 enum ResourceKind: String, CaseIterable {
     case namespace, pod, node, service, ingress
     case secret, pvc, storageClass, networkPolicy, serviceAccount
-    case statefulSet, replicaSet, job, cronJob, daemonSet
+    case deployment, statefulSet, replicaSet, job, cronJob, daemonSet
     case configMap, hpa, event
     case irsa, linkerd
 
@@ -20,6 +20,7 @@ enum ResourceKind: String, CaseIterable {
         case .storageClass:    return .brown
         case .networkPolicy:   return .purple
         case .serviceAccount:  return .orange
+        case .deployment:      return .indigo
         case .statefulSet:     return .mint
         case .replicaSet:      return .cyan
         case .job:             return .yellow
@@ -45,6 +46,7 @@ enum ResourceKind: String, CaseIterable {
         case .storageClass:    return "internaldrive"
         case .networkPolicy:   return "shield.lefthalf.filled"
         case .serviceAccount:  return "person.badge.key"
+        case .deployment:      return "square.grid.2x2"
         case .statefulSet:     return "cylinder.split.1x2"
         case .replicaSet:      return "rectangle.stack"
         case .job:             return "hammer"
@@ -73,6 +75,7 @@ enum ResourceKind: String, CaseIterable {
         case .storageClass:    return "storageclass"
         case .networkPolicy:   return "networkpolicy"
         case .serviceAccount:  return "serviceaccount"
+        case .deployment:      return "deployment"
         case .statefulSet:     return "statefulset"
         case .replicaSet:      return "replicaset"
         case .job:             return "job"
@@ -97,6 +100,7 @@ enum ResourceKind: String, CaseIterable {
         case .storageClass:    return "StorageClass"
         case .networkPolicy:   return "NetworkPolicy"
         case .serviceAccount:  return "ServiceAccount"
+        case .deployment:      return "Deployment"
         case .statefulSet:     return "StatefulSet"
         case .replicaSet:      return "ReplicaSet"
         case .job:             return "Job"
@@ -163,6 +167,26 @@ final class EmojiStore: ObservableObject {
 
     private func save() {
         UserDefaults.standard.set(map, forKey: defaultsKey)
+    }
+}
+
+@MainActor
+final class StarStore: ObservableObject {
+    @Published private var starred: Set<String> = []
+    private let defaultsKey = "kubeview.starredNamespaces"
+
+    init() {
+        if let raw = UserDefaults.standard.array(forKey: defaultsKey) as? [String] {
+            starred = Set(raw)
+        }
+    }
+
+    func isStarred(_ namespace: String) -> Bool { starred.contains(namespace) }
+
+    func toggle(_ namespace: String) {
+        if starred.contains(namespace) { starred.remove(namespace) }
+        else { starred.insert(namespace) }
+        UserDefaults.standard.set(Array(starred), forKey: defaultsKey)
     }
 }
 

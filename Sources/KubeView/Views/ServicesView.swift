@@ -2,25 +2,16 @@ import SwiftUI
 
 struct ServicesView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [Service] {
-        guard !filter.isEmpty else { return store.services }
-        let q = filter.lowercased()
-        return store.services.filter {
-            $0.name.lowercased().contains(q) ||
-            $0.namespace.lowercased().contains(q) ||
-            $0.type.lowercased().contains(q)
-        }
+        store.services.searchFiltered(search) { [$0.name, $0.namespace, $0.type] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: "Filter services",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "services") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards: cards
             case .table: table

@@ -62,6 +62,7 @@ final class ClusterStore: ObservableObject {
     @Published var nodeMetrics: [NodeMetrics] = []
     @Published var podMetrics: [PodMetrics] = []
     @Published var metricsAvailable: Bool = true
+    @Published var serverVersion: String?
     @Published var loading = false
     @Published var lastError: String?
     @Published var lastRefresh: Date?
@@ -109,6 +110,9 @@ final class ClusterStore: ObservableObject {
         defer { loading = false }
         let isSlowCycle = (refreshCounter % slowCycleRatio == 0)
         refreshCounter &+= 1
+        if serverVersion == nil {
+            serverVersion = (try? await kubectl.serverVersion()) ?? nil
+        }
         do {
             async let ps = kubectl.pods()
             async let ns = kubectl.nodes()

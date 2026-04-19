@@ -108,14 +108,37 @@ private let navGroups: [NavGroup] = [
     NavGroup(title: "Service Mesh", items: [.linkerd]),
 ]
 
+enum AppRoute: Hashable {
+    case namespace(NamespaceRoute)
+    case pod(PodRoute)
+
+    var kind: ResourceKind {
+        switch self {
+        case .namespace: return .namespace
+        case .pod:       return .pod
+        }
+    }
+    var displayName: String {
+        switch self {
+        case .namespace(let r): return r.name
+        case .pod(let r):       return r.name
+        }
+    }
+}
+
+@MainActor
+final class NavState: ObservableObject {
+    @Published var selected: NavSection? = .overview
+    @Published var path: [AppRoute] = []
+}
+
 struct ContentView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var selected: NavSection? = .overview
-    @State private var path = NavigationPath()
+    @EnvironmentObject var nav: NavState
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selected) {
+            List(selection: $nav.selected) {
                 ForEach(navGroups, id: \.title) { group in
                     let items = group.items.filter { $0.isVisible(store: store) }
                     if !items.isEmpty {
@@ -129,24 +152,23 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)
-            .onChange(of: selected) { _, _ in path = NavigationPath() }
+            .onChange(of: nav.selected) { _, _ in nav.path = [] }
         } detail: {
-            NavigationStack(path: $path) {
+            NavigationStack(path: $nav.path) {
                 currentRoot
-                    .navigationDestination(for: NamespaceRoute.self) { route in
-                        NamespaceDetailView(name: route.name)
-                    }
-                    .navigationDestination(for: PodRoute.self) { route in
-                        PodDetailView(route: route)
+                    .navigationDestination(for: AppRoute.self) { route in
+                        switch route {
+                        case .namespace(let r): NamespaceDetailView(name: r.name)
+                        case .pod(let r):       PodDetailView(route: r)
+                        }
                     }
                     .toolbar {
                         ToolbarItem(placement: .primaryAction) {
                             Button {
                                 Task { await store.refresh() }
                             } label: {
-                                Image(systemName: store.loading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                                Image(systemName: "arrow.clockwise")
                             }
-                            .disabled(store.loading)
                             .help("Refresh now")
                         }
                     }
@@ -156,7 +178,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var currentRoot: some View {
-        switch selected ?? .overview {
+        switch nav.selected ?? .overview {
         case .overview: OverviewView()
         case .events: EventsView(store: store)
         case .namespaces: NamespacesView()
@@ -197,7 +219,6 @@ struct ClusterBar: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
         }
-        .background(.bar)
     }
 
     private var addMenu: some View {

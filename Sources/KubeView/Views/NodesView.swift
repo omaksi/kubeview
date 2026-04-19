@@ -62,10 +62,7 @@ struct NodeCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(node.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                ResourceTitle(ref: .node(node.name), name: node.name)
                 Spacer()
                 StatusBadge(text: node.readyCondition,
                             color: node.readyCondition == "Ready" ? .green : .red)

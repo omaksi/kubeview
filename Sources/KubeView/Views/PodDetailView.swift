@@ -72,7 +72,7 @@ struct PodDetailView: View {
                                        description: Text("\(route.namespace)/\(route.name) no longer exists in the current context."))
             }
         }
-        .navigationTitle(route.name)
+        .navigationTitle("")
         .task(id: route) {
             await eventsLoader.load(namespace: route.namespace, pod: route.name)
         }
@@ -106,9 +106,14 @@ struct PodDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(pod.name).font(.title2.monospaced().weight(.semibold))
+                    Text("Pod")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(ResourceKind.pod.accent.opacity(0.18), in: Capsule())
+                        .foregroundStyle(ResourceKind.pod.accent)
                     StatusBadge(text: pod.phase, color: PodCard.phaseColor(pod.phase))
                 }
-                NavigationLink(value: NamespaceRoute(name: pod.namespace)) {
+                NavigationLink(value: AppRoute.namespace(NamespaceRoute(name: pod.namespace))) {
                     HStack(spacing: 4) {
                         Image(systemName: "square.stack.3d.up")
                         Text(pod.namespace).font(.callout.monospaced())
@@ -361,12 +366,30 @@ struct EventRow: View {
                     }
                     Text(event.when).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
+                if let target = involvedTarget {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link").font(.caption2).foregroundStyle(.secondary)
+                        Text(target).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
                 Text(event.message ?? "").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var involvedTarget: String? {
+        let obj = event.involvedObject
+        let kind = obj?.kind
+        let name = obj?.name
+        let ns = obj?.namespace ?? event.metadata.namespace
+        guard let k = kind, let n = name, !k.isEmpty, !n.isEmpty else { return nil }
+        if let ns, !ns.isEmpty { return "\(k)/\(n) · \(ns)" }
+        return "\(k)/\(n)"
     }
 
     private var typeColor: Color {

@@ -68,7 +68,7 @@ struct LinkerdView: View {
                 SectionHeader(title: "Control Plane", trailing: "\(controlPlanePods.count) pods in linkerd namespace")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                     ForEach(controlPlanePods) { pod in
-                        NavigationLink(value: PodRoute(namespace: pod.namespace, name: pod.name)) {
+                        NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
                             ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
                                 PodCardBody(pod: pod)
                             }
@@ -96,7 +96,7 @@ struct LinkerdView: View {
                           trailing: "\(namespaceSummaries.count) active")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(namespaceSummaries) { ns in
-                    NavigationLink(value: NamespaceRoute(name: ns.name)) {
+                    NavigationLink(value: AppRoute.namespace(NamespaceRoute(name: ns.name))) {
                         LinkerdNamespaceCard(summary: ns)
                     }
                     .buttonStyle(.plain)

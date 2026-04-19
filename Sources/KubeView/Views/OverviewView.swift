@@ -1,9 +1,33 @@
 import SwiftUI
 
+enum NamespaceSort {
+    /// Starred first, then by pod count descending (empty namespaces last),
+    /// then alphabetical within each bucket.
+    @MainActor
+    static func sorted(_ items: [NamespaceSummary], stars: StarStore) -> [NamespaceSummary] {
+        items.sorted { a, b in
+            let sa = stars.isStarred(a.name), sb = stars.isStarred(b.name)
+            if sa != sb { return sa }
+            let ea = a.podCount == 0, eb = b.podCount == 0
+            if ea != eb { return !ea }
+            return a.name < b.name
+        }
+    }
+}
+
 struct OverviewView: View {
     @EnvironmentObject var store: ClusterStore
+    @EnvironmentObject var search: SearchState
 
     var body: some View {
+        if search.isActive {
+            GlobalSearchResultsView()
+        } else {
+            dashboard
+        }
+    }
+
+    private var dashboard: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 statCards
@@ -36,6 +60,8 @@ struct OverviewView: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
             StatCard(label: "Context", value: store.context,
                      icon: "point.3.connected.trianglepath.dotted", color: .blue)
+            StatCard(label: "Kubernetes", value: store.serverVersion ?? "—",
+                     icon: "shippingbox.and.arrow.backward", color: .indigo)
             StatCard(label: "Nodes Ready", value: "\(store.nodesReady)/\(store.nodes.count)",
                      icon: "server.rack", color: store.nodesReady == store.nodes.count ? .green : .orange)
             StatCard(label: "Namespaces", value: "\(store.namespaces.count)",
@@ -82,11 +108,13 @@ struct OverviewView: View {
         }
     }
 
+    @EnvironmentObject var stars: StarStore
+
     private var namespacesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Namespaces", trailing: "\(store.namespaces.count) total")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
-                ForEach(store.namespaceSummaries.filter { $0.podCount > 0 || $0.ingressCount > 0 }) { ns in
+                ForEach(NamespaceSort.sorted(store.namespaceSummaries, stars: stars)) { ns in
                     NamespaceCard(ns: ns, metricsAvailable: store.metricsAvailable)
                 }
             }
@@ -253,17 +281,17 @@ struct NamespaceCard: View {
     let ns: NamespaceSummary
     let metricsAvailable: Bool
     @EnvironmentObject var emojis: EmojiStore
+    @EnvironmentObject var stars: StarStore
+
+    private var isEmpty: Bool { ns.podCount == 0 }
 
     var body: some View {
-        NavigationLink(value: NamespaceRoute(name: ns.name)) {
-            ResourceCard(ref: .namespace(ns.name), navigable: true) {
+        NavigationLink(value: AppRoute.namespace(NamespaceRoute(name: ns.name))) {
+            ResourceCard(ref: .namespace(ns.name), navigable: true, dimmed: isEmpty) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
-                        Text(emojis.emoji(for: .namespace(ns.name)) ?? "")
-                            .font(.system(size: 16))
-                        Text(ns.name)
-                            .font(.system(.headline, design: .monospaced))
-                            .lineLimit(1)
+                        ResourceTitle(ref: .namespace(ns.name), name: ns.name,
+                                      font: .system(.headline, design: .monospaced))
                         Spacer()
                         if ns.unhealthyCount > 0 {
                             Label("\(ns.unhealthyCount)", systemImage: "exclamationmark.triangle.fill")
@@ -271,6 +299,15 @@ struct NamespaceCard: View {
                                 .foregroundStyle(ns.failingCount > 0 ? .red : .orange)
                                 .font(.caption)
                         }
+                        Button {
+                            stars.toggle(ns.name)
+                        } label: {
+                            Image(systemName: stars.isStarred(ns.name) ? "star.fill" : "star")
+                                .font(.caption)
+                                .foregroundStyle(stars.isStarred(ns.name) ? Color.yellow : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(stars.isStarred(ns.name) ? "Unstar" : "Star this namespace")
                     }
                     if !ns.unhealthyWorkloads.isEmpty || ns.failingCount > 0 {
                         unhealthyList

@@ -3,7 +3,7 @@ import SwiftUI
 struct ServiceAccountsView: View {
     let irsaOnly: Bool
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var all: [ServiceAccount] {
@@ -11,21 +11,15 @@ struct ServiceAccountsView: View {
     }
 
     var filtered: [ServiceAccount] {
-        guard !filter.isEmpty else { return all }
-        let q = filter.lowercased()
-        return all.filter {
-            $0.name.lowercased().contains(q) ||
-            $0.namespace.lowercased().contains(q) ||
-            ($0.irsaRoleArn ?? "").lowercased().contains(q)
-        }
+        all.searchFiltered(search) { [$0.name, $0.namespace, $0.irsaRoleArn ?? ""] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: irsaOnly ? "Filter by SA name or role ARN" : "Filter service accounts",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count,
+                       label: irsaOnly ? "IRSA SAs" : "SAs") {
+                ViewModeToggle(mode: $mode)
+            }
             switch mode {
             case .cards:
                 ScrollView {
@@ -71,8 +65,8 @@ struct ServiceAccountsView: View {
     private func saCard(sa: ServiceAccount) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(sa.name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: .init(kind: irsaOnly ? .irsa : .serviceAccount, key: sa.id),
+                              name: sa.name)
                 Spacer()
                 if sa.irsaRoleArn != nil {
                     StatusBadge(text: "IRSA", color: .orange)

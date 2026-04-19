@@ -4,24 +4,18 @@ import SwiftUI
 
 struct DeploymentsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
     @State private var unhealthyOnly = false
 
     var filtered: [Deployment] {
-        var list = unhealthyOnly ? store.deployments.filter { !$0.isHealthy } : store.deployments
-        if !filter.isEmpty {
-            let q = filter.lowercased()
-            list = list.filter { $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q) }
-        }
-        return list
+        let base = unhealthyOnly ? store.deployments.filter { !$0.isHealthy } : store.deployments
+        return base.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: "Filter deployments",
-                      count: filtered.count) {
+            ViewHeader(count: filtered.count, label: "deployments") {
                 HStack(spacing: 8) {
                     Toggle("Unhealthy only", isOn: $unhealthyOnly)
                         .toggleStyle(.switch).controlSize(.small)
@@ -39,8 +33,10 @@ struct DeploymentsView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { d in
-                    ResourceCard(ref: .init(kind: .replicaSet, key: d.id)) {
+                    let ref = ResourceRef(kind: .deployment, key: d.id)
+                    ResourceCard(ref: ref) {
                         WorkloadCardBody(
+                            ref: ref,
                             name: d.name, namespace: d.namespace,
                             desired: d.desired, ready: d.ready,
                             kindLabel: "Deployment", strategy: d.strategy,
@@ -71,27 +67,25 @@ struct DeploymentsView: View {
 
 struct StatefulSetsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [StatefulSet] {
-        guard !filter.isEmpty else { return store.statefulSets }
-        let q = filter.lowercased()
-        return store.statefulSets.filter { $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q) }
+        store.statefulSets.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter statefulsets",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "statefulsets") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                         ForEach(filtered) { ss in
-                            ResourceCard(ref: .init(kind: .statefulSet, key: ss.id)) {
+                            let ref = ResourceRef(kind: .statefulSet, key: ss.id)
+                            ResourceCard(ref: ref) {
                                 WorkloadCardBody(
+                                    ref: ref,
                                     name: ss.name, namespace: ss.namespace,
                                     desired: ss.desired, ready: ss.ready,
                                     kindLabel: "StatefulSet", strategy: ss.serviceName,
@@ -120,23 +114,18 @@ struct StatefulSetsView: View {
 
 struct ReplicaSetsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
     @State private var hideScaledToZero = true
 
     var filtered: [ReplicaSet] {
-        var list = hideScaledToZero ? store.replicaSets.filter { $0.desired > 0 } : store.replicaSets
-        if !filter.isEmpty {
-            let q = filter.lowercased()
-            list = list.filter { $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q) }
-        }
-        return list
+        let base = hideScaledToZero ? store.replicaSets.filter { $0.desired > 0 } : store.replicaSets
+        return base.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter replicasets",
-                      count: filtered.count) {
+            ViewHeader(count: filtered.count, label: "replicasets") {
                 HStack(spacing: 8) {
                     Toggle("Hide scaled-to-0", isOn: $hideScaledToZero)
                         .toggleStyle(.switch).controlSize(.small)
@@ -148,8 +137,10 @@ struct ReplicaSetsView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                         ForEach(filtered) { rs in
-                            ResourceCard(ref: .init(kind: .replicaSet, key: rs.id)) {
+                            let ref = ResourceRef(kind: .replicaSet, key: rs.id)
+                            ResourceCard(ref: ref) {
                                 WorkloadCardBody(
+                                    ref: ref,
                                     name: rs.name, namespace: rs.namespace,
                                     desired: rs.desired, ready: rs.ready,
                                     kindLabel: "ReplicaSet", strategy: nil,
@@ -178,20 +169,16 @@ struct ReplicaSetsView: View {
 
 struct JobsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [KubeJob] {
-        guard !filter.isEmpty else { return store.jobs }
-        let q = filter.lowercased()
-        return store.jobs.filter { $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q) }
+        store.jobs.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter jobs",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "jobs") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
@@ -200,8 +187,7 @@ struct JobsView: View {
                             ResourceCard(ref: .init(kind: .job, key: job.id)) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack {
-                                        Text(job.name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                                            .lineLimit(1).truncationMode(.middle)
+                                        ResourceTitle(ref: .init(kind: .job, key: job.id), name: job.name)
                                         Spacer()
                                         StatusBadge(text: job.phase, color: jobPhaseColor(job.phase))
                                     }
@@ -241,20 +227,16 @@ struct JobsView: View {
 
 struct CronJobsView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
     @State private var mode: ViewMode = .cards
 
     var filtered: [CronJob] {
-        guard !filter.isEmpty else { return store.cronJobs }
-        let q = filter.lowercased()
-        return store.cronJobs.filter { $0.name.lowercased().contains(q) || $0.namespace.lowercased().contains(q) }
+        store.cronJobs.searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter, placeholder: "Filter cronjobs",
-                      count: filtered.count,
-                      trailing: { ViewModeToggle(mode: $mode) })
+            ViewHeader(count: filtered.count, label: "cronjobs") { ViewModeToggle(mode: $mode) }
             switch mode {
             case .cards:
                 ScrollView {
@@ -263,8 +245,7 @@ struct CronJobsView: View {
                             ResourceCard(ref: .init(kind: .cronJob, key: cj.id)) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack {
-                                        Text(cj.name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                                            .lineLimit(1).truncationMode(.middle)
+                                        ResourceTitle(ref: .init(kind: .cronJob, key: cj.id), name: cj.name)
                                         Spacer()
                                         if cj.suspend {
                                             StatusBadge(text: "Suspended", color: .orange)
@@ -303,6 +284,7 @@ struct CronJobsView: View {
 // MARK: - Shared helpers
 
 struct WorkloadCardBody: View {
+    let ref: ResourceRef
     let name: String
     let namespace: String
     let desired: Int
@@ -316,8 +298,7 @@ struct WorkloadCardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(name).font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
+                ResourceTitle(ref: ref, name: name)
                 Spacer()
                 StatusBadge(text: "\(ready)/\(desired)", color: healthy ? .green : .orange)
             }

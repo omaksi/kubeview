@@ -2,20 +2,20 @@ import SwiftUI
 
 struct NamespacesView: View {
     @EnvironmentObject var store: ClusterStore
-    @State private var filter: String = ""
+    @EnvironmentObject var search: SearchState
+    @EnvironmentObject var stars: StarStore
     @State private var mode: ViewMode = .cards
 
     var filtered: [NamespaceSummary] {
-        guard !filter.isEmpty else { return store.namespaceSummaries }
-        let q = filter.lowercased()
-        return store.namespaceSummaries.filter { $0.name.lowercased().contains(q) }
+        NamespaceSort.sorted(
+            store.namespaceSummaries.searchFiltered(search) { [$0.name] },
+            stars: stars
+        )
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(text: $filter,
-                      placeholder: "Filter namespaces",
-                      count: filtered.count) {
+            ViewHeader(count: filtered.count, label: "namespaces") {
                 HStack(spacing: 8) {
                     if !store.metricsAvailable {
                         Label("metrics unavailable", systemImage: "exclamationmark.triangle")

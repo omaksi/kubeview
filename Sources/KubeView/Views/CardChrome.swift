@@ -6,16 +6,19 @@ import SwiftUI
 struct ResourceCard<Content: View>: View {
     let ref: ResourceRef
     let navigable: Bool
+    let dimmed: Bool
     @EnvironmentObject var emojis: EmojiStore
     @EnvironmentObject var store: ClusterStore
-    @State private var pickerOpen = false
     @State private var describeOpen = false
     @State private var hovering = false
+    @State private var emojiInput: String = ""
+    @FocusState private var emojiFieldFocused: Bool
     let content: Content
 
-    init(ref: ResourceRef, navigable: Bool = false, @ViewBuilder content: () -> Content) {
+    init(ref: ResourceRef, navigable: Bool = false, dimmed: Bool = false, @ViewBuilder content: () -> Content) {
         self.ref = ref
         self.navigable = navigable
+        self.dimmed = dimmed
         self.content = content()
     }
 
@@ -24,45 +27,81 @@ struct ResourceCard<Content: View>: View {
             Rectangle()
                 .fill(ref.kind.accent)
                 .frame(width: 3)
-            ZStack(alignment: .topTrailing) {
-                content
-                    .padding(12)
-                    .padding(.trailing, navigable ? 10 : 0)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let e = emojis.emoji(for: ref) {
-                    Text(e)
-                        .font(.system(size: 18))
-                        .padding(6)
+            content
+                .padding(12)
+                .padding(.trailing, navigable ? 22 : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    if navigable {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.trailing, 10)
+                            .opacity(hovering ? 1.0 : 0.6)
+                    }
                 }
-                if navigable {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.trailing, 10)
-                        .frame(maxHeight: .infinity)
-                        .opacity(hovering ? 1.0 : 0.6)
-                }
-            }
         }
         .background(.quaternary.opacity(hovering && navigable ? 0.55 : 0.4))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .contentShape(RoundedRectangle(cornerRadius: 10))
+        .opacity(dimmed ? 0.5 : 1.0)
+        .saturation(dimmed ? 0.3 : 1.0)
         .onHover { hovering = $0 }
+        .overlay(alignment: .topLeading) {
+            // Hidden field that receives emoji from the system character palette.
+            TextField("", text: $emojiInput)
+                .textFieldStyle(.plain)
+                .focused($emojiFieldFocused)
+                .frame(width: 1, height: 1)
+                .opacity(0.001)
+                .allowsHitTesting(false)
+                .onChange(of: emojiInput) { _, new in
+                    guard !new.isEmpty else { return }
+                    emojis.set(String(new.prefix(1)), for: ref)
+                    emojiInput = ""
+                    emojiFieldFocused = false
+                }
+        }
         .contextMenu {
             if ref.kind.kubectlResource != nil {
                 Button("Describe…") { describeOpen = true }
                 Divider()
             }
-            Button("Set Emoji…") { pickerOpen = true }
+            Button("Set Emoji…") {
+                emojiInput = ""
+                emojiFieldFocused = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    NSApp.orderFrontCharacterPalette(nil)
+                }
+            }
             if emojis.emoji(for: ref) != nil {
                 Button("Clear Emoji", role: .destructive) { emojis.set(nil, for: ref) }
             }
         }
-        .popover(isPresented: $pickerOpen, arrowEdge: .top) {
-            EmojiPicker(ref: ref, isOpen: $pickerOpen).environmentObject(emojis)
-        }
         .sheet(isPresented: $describeOpen) {
             DescribeSheet(ref: ref, context: store.context, isOpen: $describeOpen)
+        }
+    }
+}
+
+/// Renders the emoji (if one is assigned to `ref`) followed by the resource name.
+/// Use at the start of each card body's title HStack so emojis are visible
+/// regardless of what else is in the header.
+struct ResourceTitle: View {
+    let ref: ResourceRef
+    let name: String
+    var font: Font = .system(.callout, design: .monospaced).weight(.semibold)
+    @EnvironmentObject var emojis: EmojiStore
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let e = emojis.emoji(for: ref) {
+                Text(e).font(.system(size: 16))
+            }
+            Text(name)
+                .font(font)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 }
@@ -174,73 +213,3 @@ struct DescribeSheet: View {
     }
 }
 
-struct EmojiPicker: View {
-    let ref: ResourceRef
-    @Binding var isOpen: Bool
-    @EnvironmentObject var emojis: EmojiStore
-    @State private var text: String = ""
-
-    // Presets by kind — quick pick
-    private var presets: [String] {
-        switch ref.kind {
-        case .namespace:      return ["📦", "🏷", "🧩", "🧪", "🚀", "🔒", "💼", "🌐", "🧰", "🛠", "💾", "📡"]
-        case .pod:            return ["🐳", "🧊", "🔧", "⚙️", "🚦", "🔥", "💤", "🎯"]
-        case .node:           return ["🖥", "🧱", "🗄", "⚡️", "🌡", "💪"]
-        case .service:        return ["🔌", "🧵", "🔁", "🧭", "📮", "🛰"]
-        case .ingress:        return ["🌐", "🔐", "🚪", "📥", "🧱", "🛣"]
-        case .secret:         return ["🔑", "🔐", "🛡", "🤫", "📜", "💳"]
-        case .pvc:            return ["💾", "📀", "🗄", "📁", "🧮"]
-        case .storageClass:   return ["🗃", "💿", "📚"]
-        case .networkPolicy:  return ["🛡", "🚧", "🔒", "🧱"]
-        case .serviceAccount: return ["👤", "🎫", "🛂", "🪪"]
-        case .statefulSet:    return ["🗂", "🏛", "📚", "🧱"]
-        case .replicaSet:     return ["♊️", "🧬", "🔁"]
-        case .job:            return ["🔨", "⚒", "🛠", "🎯"]
-        case .cronJob:        return ["⏰", "📆", "🔁", "⏳"]
-        case .daemonSet:      return ["👹", "🛰", "📡"]
-        case .configMap:      return ["📋", "📄", "⚙️", "🗒"]
-        case .hpa:            return ["📈", "⚖️", "🎚", "📊"]
-        case .event:          return ["🔔", "📣", "📢"]
-        case .irsa:           return ["🪪", "🛂", "🗝", "☁️"]
-        case .linkerd:        return ["🕸", "🔗", "🌊"]
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Emoji for \(ref.kind.title) \(ref.key)")
-                .font(.caption).foregroundStyle(.secondary)
-
-            TextField("Type or paste emoji", text: $text)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(save)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(32)), count: 6), spacing: 6) {
-                ForEach(presets, id: \.self) { e in
-                    Button { emojis.set(e, for: ref); isOpen = false } label: {
-                        Text(e).font(.system(size: 22))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            HStack {
-                Button("Open System Picker") {
-                    NSApp.orderFrontCharacterPalette(nil)
-                }
-                .buttonStyle(.link)
-                Spacer()
-                Button("Cancel") { isOpen = false }
-                Button("Save") { save() }.keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(12)
-        .frame(width: 280)
-        .onAppear { text = emojis.emoji(for: ref) ?? "" }
-    }
-
-    private func save() {
-        emojis.set(text, for: ref)
-        isOpen = false
-    }
-}
