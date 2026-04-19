@@ -7,43 +7,97 @@ Instructions for Claude Code when working in this repo.
 Native macOS desktop app for viewing Kubernetes clusters. SwiftUI, SPM executable,
 macOS 14+. Shells out to `kubectl` (no native k8s client) — intentional for MVP.
 
+## Featureset (as of v0.1.1)
+
+| Category | Resources |
+|---|---|
+| Cluster | Overview, Events (lazy-load, warnings-only toggle), Namespaces (with drill-down), Nodes |
+| Workloads | Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods (with Overview/Logs/Describe tabs), HPAs |
+| Network | Services, Ingresses, NetworkPolicies |
+| Storage | PVCs, StorageClasses (with `is-default-class` annotation) |
+| Config & RBAC | ConfigMaps (expandable values), Secrets (click-to-reveal), ServiceAccounts, IRSA (filtered SA view showing `eks.amazonaws.com/role-arn`) |
+| Service Mesh | Linkerd (detects `linkerd-proxy` sidecar; shows control-plane pods; mesh coverage per namespace) |
+
+**Cross-cutting:**
+- **Multi-cluster**: `ClusterManager` supervises a `ClusterStore` per active context; each has its own refresh loop. No kubeconfig mutation — every kubectl call uses `--context`. Active contexts and selection persist via `UserDefaults`.
+- **Health detection** (`Pod.healthState`): ImagePullBackOff / CrashLoopBackOff / ErrImagePull / CreateContainerConfigError / etc. surface as "failing" even when `phase=Pending`. Deployment/StatefulSet/DaemonSet/ReplicaSet/Job also report isHealthy via ready-vs-desired.
+- **Unhealthy surfaces**: Overview has an "Unhealthy" section listing pods + workloads with reasons. NamespaceCard shows a triangle badge and inline list of up to 3 unhealthy workloads.
+- **Universal Describe**: any card with `kind.kubectlResource != nil` gets a right-click → Describe… sheet that runs `kubectl describe <kind> <name> -n <ns>`.
+- **Emoji store** (`EmojiStore`): right-click any card → Set Emoji; persisted in `UserDefaults` under `kubeview.emojiMap`. System character palette available via the picker.
+- **Dynamic sidebar**: `NavSection.isVisible(store:)` hides sections that have nothing to show in the current context (Linkerd, IRSA, NetworkPolicies, PVCs, StatefulSets, Jobs, CronJobs, DaemonSets, ReplicaSets, ConfigMaps, HPAs).
+- **Cards-first**: every list view starts as cards; `ViewModeToggle` switches to a table.
+- **Menu bar**: `MenuBarExtra` with `.menuBarExtraStyle(.window)`; aggregates health across all active clusters, per-cluster summary rows with deactivate buttons.
+- **Refresh cadence**: 5s for everything except secrets + configmaps which are on a 30s "slow cycle" (they're the largest payloads; `slowCycleRatio = 6` in `ClusterStore`). Metrics-server failures are swallowed so the rest keeps updating.
+
 ## Layout
 
 ```
 Sources/KubeView/
-├── KubeViewApp.swift       # @main — WindowGroup + MenuBarExtra
-├── ClusterStore.swift      # @MainActor ObservableObject; 5s auto-refresh; derived summaries
+├── KubeViewApp.swift             # @main — WindowGroup + MenuBarExtra, RootView, menu bar icon logic
+├── ClusterManager.swift          # Supervisor: available contexts, active set, selected store
+├── ClusterStore.swift            # Per-context store; @Published resources + derived state (precomputed in refresh)
+├── EmojiStore.swift              # ResourceKind/ResourceRef + UserDefaults-backed emoji map
 ├── Services/
-│   └── KubectlService.swift  # actor wrapping `kubectl ... -o json` subprocess
+│   └── KubectlService.swift      # actor: `kubectl --context <ctx> ... -o json` subprocess wrapper; all fetches + describe + logs + events
 ├── Models/
-│   └── K8sModels.swift     # Codable structs; ResourceParser for CPU/memory quantities
+│   └── K8sModels.swift           # Codable structs for every resource; ResourceParser (CPU millicores, memory bytes); Pod.healthState
 └── Views/
-    ├── ContentView.swift   # NavigationSplitView + toolbar (context picker, refresh)
-    ├── OverviewView.swift  # stat cards, node usage bars, namespace cards
-    ├── NamespacesView.swift
-    ├── PodsView.swift
-    ├── NodesView.swift
-    ├── IngressesView.swift
-    ├── ViewMode.swift      # shared ViewModeToggle + FilterBar
-    └── MenuBarContent.swift
-scripts/bundle.sh            # wraps SPM binary into KubeView.app (dev)
-.github/workflows/release.yml # universal binary + ad-hoc sign + GitHub Release + tap bump
+    ├── ContentView.swift         # NavigationSplitView + grouped sidebar (nav groups auto-filtered by isVisible)
+    ├── CardChrome.swift          # ResourceCard (kind stripe + emoji overlay + navigable chevron), DescribeSheet, EmojiPicker
+    ├── ViewMode.swift            # ViewModeToggle, FilterBar (generic over trailing view)
+    ├── OverviewView.swift        # Stat cards, Unhealthy section, Nodes usage bars, NamespaceCard grid
+    ├── NamespacesView.swift      # List view; NamespaceCard defined in OverviewView
+    ├── NamespaceDetailView.swift # Drill-down: pods/services/ingresses scoped to ns; shared PodCardBody/ServiceCardBody/IngressCardBody
+    ├── PodsView.swift            # List view + PodCard.phaseColor helper
+    ├── PodDetailView.swift       # Overview/Logs/Describe tabs; ContainerCard; EventRow; PodEventsLoader
+    ├── PodLogsDescribe.swift     # PodLogsView, PodDescribeView (+ their loaders)
+    ├── NodesView.swift           # NodeCardBody with UsageBars when metrics-server available
+    ├── ServicesView.swift, IngressesView.swift, NetworkPoliciesView.swift
+    ├── SecretsView.swift         # Click-to-reveal per-key (base64 decoded on demand)
+    ├── StorageViews.swift        # PVCs + StorageClasses
+    ├── ServiceAccountsView.swift # Reused with irsaOnly: Bool for the IRSA nav entry
+    ├── WorkloadsViews.swift      # Deployments, StatefulSets, ReplicaSets, Jobs, CronJobs + shared WorkloadCardBody
+    ├── MoreViews.swift           # DaemonSets, ConfigMaps, HPAs, cluster Events (lazy-load)
+    ├── LinkerdView.swift         # Control plane + meshed namespaces + meshed pods
+    └── MenuBarContent.swift      # Tray dropdown
+Resources/
+└── AppIcon.icns                  # slate→teal hexagon + binoculars (generated by scripts/make_icon.swift)
+scripts/
+├── bundle.sh                     # wraps SPM binary into KubeView.app (local dev)
+└── make_icon.swift               # Core Graphics → .iconset → iconutil → AppIcon.icns
+.github/workflows/release.yml     # universal binary + icon gen + ad-hoc sign + zip + Release + tap bump
 ```
 
 ## Design rules
 
 - **Cards are the default view**. Every list view shows cards first; tables are an
   opt-in toggle via `ViewModeToggle`. Do not introduce table-only views.
+- **Navigable cards show a chevron.** Wrap in `NavigationLink(value:)` and pass
+  `navigable: true` to `ResourceCard`. The chevron + hover tint come from the
+  shared chrome — don't add manual chevrons in card bodies.
 - **Kubectl only, no native client.** All cluster I/O goes through `KubectlService`.
-  If it can't be expressed as `kubectl ... -o json` or `kubectl get --raw ...`, push
-  back before adding it.
-- **Metrics-server is optional.** Anything using `podMetrics()` / `nodeMetrics()`
-  must degrade gracefully when the API returns nil. Check `store.metricsAvailable`
-  before rendering "used" numbers; show "—" or capacity-only when false.
-- **Refresh is polled, not watched.** `ClusterStore.start()` runs a 5s loop.
+  If it can't be expressed as `kubectl ... -o json` / `kubectl get --raw ...` /
+  `kubectl describe` / `kubectl logs`, push back before adding it.
+- **Context is per-service, not global.** Pass `--context` via `KubectlService(context:)`;
+  never call `kubectl config use-context` (that mutates the user's kubeconfig
+  and affects other terminals). `ClusterManager` is the sole owner of active contexts.
+- **Optional resources fail soft.** `metrics-server`, `networkpolicies`, `ingresses`,
+  workload types may not exist on every cluster. In `ClusterStore.refresh()`, wrap
+  in `(try? await ...) ?? []` so one missing API doesn't tank the whole refresh.
+  `metricsAvailable` gates "used" numbers in the UI.
+- **Large payloads on slow cadence.** Secrets + ConfigMaps can be MBs on busy
+  clusters. They're on `slowCycleRatio` (currently 6 → every 30s). Add any new
+  expensive `--all-namespaces` fetch to the slow cycle.
+- **Derived state computed in `refresh()`, not per render.** `namespaceSummaries`,
+  `unhealthyWorkloads`, `unhealthyPods`, `nodeUsage` are `@Published private(set)`
+  and recomputed once per refresh. Don't inline these into view bodies.
+- **Refresh is polled, not watched.** Each `ClusterStore.start()` runs a 5s loop.
   Don't add watch streams — if you need push updates, we'd move to the native
-  k8s Swift client, which is a larger change (discuss first).
-- **No emojis in source or UI** unless explicitly requested.
+  k8s Swift client (discuss first — it's a larger change).
+- **No `AnyView` in view chains.** `FilterBar` is generic over its trailing view;
+  keep it that way so SwiftUI can diff properly.
+- **No emojis in source or UI** unless explicitly requested. The per-resource
+  emojis the user sets at runtime are a separate thing (stored in `EmojiStore`).
 - **Minimal comments.** Only non-obvious invariants / workarounds. No docstrings.
 
 ## Build & run
@@ -116,12 +170,18 @@ The Cask formula is regenerated by the release workflow. Don't hand-edit
 
 ## Common tasks
 
-- **Add a new resource kind** (e.g. Deployments): model struct in `K8sModels.swift`,
-  fetch method in `KubectlService.swift`, `@Published` in `ClusterStore`, card view
-  matching the existing pattern, new `NavSection` case, add to `ContentView` switch.
-- **Change refresh interval**: `ClusterStore.start()` — currently 5_000_000_000 ns.
-- **Menu bar indicator logic**: `KubeViewApp.menuIcon` — update when adding new
-  "unhealthy" signals.
+- **Add a new resource kind**:
+  1. Codable model in `K8sModels.swift` (conform to `Identifiable`, `Hashable`)
+  2. Fetch method in `KubectlService.swift` (`kubectl get <kind> --all-namespaces -o json`)
+  3. `@Published var` on `ClusterStore` + `async let` in `refresh()` (use `(try? await …) ?? []` if the API may be missing)
+  4. New case in `ResourceKind` (`EmojiStore.swift`) — accent color, SF Symbol, title, `kubectlResource` for describe, emoji presets in `CardChrome.swift`
+  5. New `NavSection` case + title + icon + `ContentView.currentRoot` switch + `isVisible(store:)` rule
+  6. Add to the right `NavGroup` in `navGroups`
+  7. Write the card body + list view; wrap cards in `ResourceCard(ref:navigable:)`
+- **Expensive fetches** (all-namespaces secrets-sized): put inside the `if isSlowCycle { … }` block in `refresh()` instead of the concurrent batch.
+- **Change refresh interval**: `ClusterStore.start()` — `5_000_000_000` ns for the fast cycle; `slowCycleRatio` for the slow-cycle divisor.
+- **Menu bar indicator**: `KubeViewApp.menuIcon` — uses `manager.activeStores` aggregate health. Update when adding new "unhealthy" signals.
+- **Tweak the icon**: edit gradient/hex size in `scripts/make_icon.swift`, run it from the repo root to regenerate `Resources/AppIcon.icns`. CI regenerates on every release.
 
 ## Don't
 
