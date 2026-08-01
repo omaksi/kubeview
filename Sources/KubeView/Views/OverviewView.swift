@@ -22,6 +22,8 @@ struct OverviewView: View {
     var body: some View {
         if search.isActive {
             GlobalSearchResultsView()
+        } else if store.isFirstLoad {
+            LoadingPlaceholder(label: "cluster")
         } else {
             dashboard
         }
@@ -36,12 +38,6 @@ struct OverviewView: View {
                 }
                 nodesSection
                 namespacesSection
-                if let err = store.lastError {
-                    Text(err)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
             .padding()
         }

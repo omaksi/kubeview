@@ -33,14 +33,18 @@ struct LinkerdView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                summaryCards
-                controlPlaneSection
-                namespacesSection
-                meshedPodsSection
+        if store.isFirstLoad {
+            LoadingPlaceholder(label: "mesh")
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    summaryCards
+                    controlPlaneSection
+                    namespacesSection
+                    meshedPodsSection
+                }
+                .padding()
             }
-            .padding()
         }
     }
 

@@ -14,34 +14,38 @@ struct DaemonSetsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "daemonsets") { ViewModeToggle(mode: $mode) }
-            switch mode {
-            case .cards:
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
-                        ForEach(filtered) { ds in
-                            let ref = ResourceRef(kind: .daemonSet, key: ds.id)
-                            ResourceCard(ref: ref) {
-                                WorkloadCardBody(
-                                    ref: ref,
-                                    name: ds.name, namespace: ds.namespace,
-                                    desired: ds.desired, ready: ds.ready,
-                                    kindLabel: "DaemonSet", strategy: nil,
-                                    healthy: ds.isHealthy, reason: ds.unhealthyReason, age: ds.age
-                                )
+            if filtered.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "daemonsets")
+            } else {
+                switch mode {
+                case .cards:
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
+                            ForEach(filtered) { ds in
+                                let ref = ResourceRef(kind: .daemonSet, key: ds.id)
+                                ResourceCard(ref: ref) {
+                                    WorkloadCardBody(
+                                        ref: ref,
+                                        name: ds.name, namespace: ds.namespace,
+                                        desired: ds.desired, ready: ds.ready,
+                                        kindLabel: "DaemonSet", strategy: nil,
+                                        healthy: ds.isHealthy, reason: ds.unhealthyReason, age: ds.age
+                                    )
+                                }
                             }
-                        }
-                    }.padding(12)
-                }
-            case .table:
-                Table(filtered) {
-                    TableColumn("Namespace") { Text($0.namespace).font(.system(.body, design: .monospaced)) }
-                    TableColumn("Name") { Text($0.name).font(.system(.body, design: .monospaced)) }
-                    TableColumn("Desired") { Text("\($0.desired)") }.width(min: 50, ideal: 70)
-                    TableColumn("Ready") { ds in
-                        Text("\(ds.ready)").foregroundStyle(ds.isHealthy ? Color.primary : Color.orange)
-                    }.width(min: 50, ideal: 70)
-                    TableColumn("Available") { Text("\($0.available)") }.width(min: 60, ideal: 80)
-                    TableColumn("Age") { Text($0.age) }.width(min: 40, ideal: 60)
+                        }.padding(12)
+                    }
+                case .table:
+                    Table(filtered) {
+                        TableColumn("Namespace") { Text($0.namespace).font(.system(.body, design: .monospaced)) }
+                        TableColumn("Name") { Text($0.name).font(.system(.body, design: .monospaced)) }
+                        TableColumn("Desired") { Text("\($0.desired)") }.width(min: 50, ideal: 70)
+                        TableColumn("Ready") { ds in
+                            Text("\(ds.ready)").foregroundStyle(ds.isHealthy ? Color.primary : Color.orange)
+                        }.width(min: 50, ideal: 70)
+                        TableColumn("Available") { Text("\($0.available)") }.width(min: 60, ideal: 80)
+                        TableColumn("Age") { Text($0.age) }.width(min: 40, ideal: 60)
+                    }
                 }
             }
         }
@@ -62,25 +66,29 @@ struct ConfigMapsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "configmaps") { ViewModeToggle(mode: $mode) }
-            switch mode {
-            case .cards:
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
-                        ForEach(filtered) { cm in
-                            ResourceCard(ref: .init(kind: .configMap, key: cm.id)) {
-                                ConfigMapCardBody(configMap: cm)
+            if filtered.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "configmaps")
+            } else {
+                switch mode {
+                case .cards:
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
+                            ForEach(filtered) { cm in
+                                ResourceCard(ref: .init(kind: .configMap, key: cm.id)) {
+                                    ConfigMapCardBody(configMap: cm)
+                                }
                             }
-                        }
-                    }.padding(12)
-                }
-            case .table:
-                Table(filtered) {
-                    TableColumn("Namespace") { Text($0.namespace).font(.system(.body, design: .monospaced)) }
-                    TableColumn("Name") { Text($0.name).font(.system(.body, design: .monospaced)) }
-                    TableColumn("Keys") { Text("\($0.textKeys.count + $0.binaryKeys.count)") }.width(min: 50, ideal: 70)
-                    TableColumn("Size") { Text(ResourceParser.formatBytes(Double($0.sizeBytes))) }
-                        .width(min: 70, ideal: 90)
-                    TableColumn("Age") { Text($0.age) }.width(min: 40, ideal: 60)
+                        }.padding(12)
+                    }
+                case .table:
+                    Table(filtered) {
+                        TableColumn("Namespace") { Text($0.namespace).font(.system(.body, design: .monospaced)) }
+                        TableColumn("Name") { Text($0.name).font(.system(.body, design: .monospaced)) }
+                        TableColumn("Keys") { Text("\($0.textKeys.count + $0.binaryKeys.count)") }.width(min: 50, ideal: 70)
+                        TableColumn("Size") { Text(ResourceParser.formatBytes(Double($0.sizeBytes))) }
+                            .width(min: 70, ideal: 90)
+                        TableColumn("Age") { Text($0.age) }.width(min: 40, ideal: 60)
+                    }
                 }
             }
         }
@@ -167,56 +175,60 @@ struct HPAsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "HPAs") { ViewModeToggle(mode: $mode) }
-            switch mode {
-            case .cards:
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
-                        ForEach(filtered) { h in
-                            ResourceCard(ref: .init(kind: .hpa, key: h.id)) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        ResourceTitle(ref: .init(kind: .hpa, key: h.id), name: h.name)
-                                        Spacer()
-                                        StatusBadge(text: "\(h.currentReplicas)/\(h.desiredReplicas)",
-                                                    color: replicasColor(h))
-                                    }
-                                    Text(h.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
-                                        Text("\(h.targetKind)/\(h.targetName)")
-                                            .font(.caption.monospaced())
-                                    }
-                                    HStack(spacing: 12) {
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text("Replicas").font(.caption2).foregroundStyle(.secondary)
-                                            Text("\(h.minReplicas)–\(h.maxReplicas)")
-                                                .font(.caption.monospacedDigit())
+            if filtered.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "HPAs")
+            } else {
+                switch mode {
+                case .cards:
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
+                            ForEach(filtered) { h in
+                                ResourceCard(ref: .init(kind: .hpa, key: h.id)) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            ResourceTitle(ref: .init(kind: .hpa, key: h.id), name: h.name)
+                                            Spacer()
+                                            StatusBadge(text: "\(h.currentReplicas)/\(h.desiredReplicas)",
+                                                        color: replicasColor(h))
                                         }
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text("Age").font(.caption2).foregroundStyle(.secondary)
-                                            Text(h.age).font(.caption.monospacedDigit())
+                                        Text(h.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+                                            Text("\(h.targetKind)/\(h.targetName)")
+                                                .font(.caption.monospaced())
                                         }
-                                    }
-                                    if !h.metricSummary.isEmpty {
-                                        Text(h.metricSummary)
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(.green)
+                                        HStack(spacing: 12) {
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text("Replicas").font(.caption2).foregroundStyle(.secondary)
+                                                Text("\(h.minReplicas)–\(h.maxReplicas)")
+                                                    .font(.caption.monospacedDigit())
+                                            }
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text("Age").font(.caption2).foregroundStyle(.secondary)
+                                                Text(h.age).font(.caption.monospacedDigit())
+                                            }
+                                        }
+                                        if !h.metricSummary.isEmpty {
+                                            Text(h.metricSummary)
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(.green)
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }.padding(12)
-                }
-            case .table:
-                Table(filtered) {
-                    TableColumn("Namespace") { Text($0.namespace).font(.system(.body, design: .monospaced)) }
-                    TableColumn("Name") { Text($0.name).font(.system(.body, design: .monospaced)) }
-                    TableColumn("Target") { Text("\($0.targetKind)/\($0.targetName)").font(.caption.monospaced()) }
-                    TableColumn("Replicas") { Text("\($0.currentReplicas)/\($0.desiredReplicas)") }
-                        .width(min: 70, ideal: 90)
-                    TableColumn("Range") { Text("\($0.minReplicas)–\($0.maxReplicas)") }.width(min: 60, ideal: 80)
-                    TableColumn("Metrics") { Text($0.metricSummary).font(.caption.monospaced()) }
-                    TableColumn("Age") { Text($0.age) }.width(min: 40, ideal: 60)
+                        }.padding(12)
+                    }
+                case .table:
+                    Table(filtered) {
+                        TableColumn("Namespace") { Text($0.namespace).font(.system(.body, design: .monospaced)) }
+                        TableColumn("Name") { Text($0.name).font(.system(.body, design: .monospaced)) }
+                        TableColumn("Target") { Text("\($0.targetKind)/\($0.targetName)").font(.caption.monospaced()) }
+                        TableColumn("Replicas") { Text("\($0.currentReplicas)/\($0.desiredReplicas)") }
+                            .width(min: 70, ideal: 90)
+                        TableColumn("Range") { Text("\($0.minReplicas)–\($0.maxReplicas)") }.width(min: 60, ideal: 80)
+                        TableColumn("Metrics") { Text($0.metricSummary).font(.caption.monospaced()) }
+                        TableColumn("Age") { Text($0.age) }.width(min: 40, ideal: 60)
+                    }
                 }
             }
         }

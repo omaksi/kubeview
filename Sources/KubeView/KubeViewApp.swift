@@ -54,14 +54,29 @@ struct RootView: View {
                 }
                 .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
-                TopLoadingBar(visible: store.loading && store.lastRefresh == nil)
-                ContentView().environmentObject(store)
+                ClusterContentView(store: store)
             }
         } else {
             VStack(spacing: 0) {
                 ClusterBar()
                 EmptyClusterView()
             }
+        }
+    }
+}
+
+/// Observes the selected store directly. `RootView` only watches the manager,
+/// and `selectedStore` is computed — reading `lastError` up there would never
+/// re-render when a refresh fails.
+struct ClusterContentView: View {
+    @ObservedObject var store: ClusterStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let err = store.lastError {
+                ErrorBanner(message: err) { Task { await store.refresh() } }
+            }
+            ContentView().environmentObject(store)
         }
     }
 }

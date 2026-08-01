@@ -24,9 +24,13 @@ struct NamespacesView: View {
                     ViewModeToggle(mode: $mode)
                 }
             }
-            switch mode {
-            case .cards: cards
-            case .table: table
+            if filtered.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "namespaces")
+            } else {
+                switch mode {
+                case .cards: cards
+                case .table: table
+                }
             }
         }
     }

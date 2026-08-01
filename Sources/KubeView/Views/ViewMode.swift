@@ -49,31 +49,51 @@ struct ViewHeader<Trailing: View>: View {
     }
 }
 
-/// 2pt indeterminate progress strip — a soft gradient sweep that loops while
-/// `visible` is true and fades out otherwise. Meant to sit at the top of the
-/// detail area; zero layout cost when hidden.
-struct TopLoadingBar: View {
-    let visible: Bool
-    @State private var phase: CGFloat = 0
+/// Centered "Loading…" placeholder shown in place of an empty list/grid on
+/// the very first refresh, before any data has arrived. Gate usage on
+/// `store.isFirstLoad` (plus an emptiness check, so a partial refresh still
+/// shows what it got) — never on `lastRefresh` alone, or a failed first
+/// refresh spins forever.
+struct LoadingPlaceholder: View {
+    let label: String
 
     var body: some View {
-        GeometryReader { geo in
-            Rectangle()
-                .fill(LinearGradient(
-                    colors: [.clear, Color.accentColor.opacity(0.9), .clear],
-                    startPoint: .leading, endPoint: .trailing
-                ))
-                .frame(width: geo.size.width * 0.4)
-                .offset(x: phase * (geo.size.width * 1.4) - geo.size.width * 0.4)
+        VStack(spacing: 12) {
+            ProgressView().controlSize(.large)
+            Text("Loading \(label)…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
-        .frame(height: 2)
-        .opacity(visible ? 1 : 0)
-        .animation(.easeInOut(duration: 0.25), value: visible)
-        .onAppear {
-            withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) {
-                phase = 1
-            }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+}
+
+/// Refresh-failure strip. Mounted once in `ClusterContentView` so it covers
+/// every view — list views have no error surface of their own, and the
+/// Overview banner it replaces was unreachable on a failed first refresh.
+struct ErrorBanner: View {
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.caption.monospaced())
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Button("Retry", action: retry)
+                .controlSize(.small)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.red.opacity(0.12))
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 

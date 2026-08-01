@@ -59,9 +59,13 @@ struct IngressesView: View {
                        label: mode == .cards ? "ingresses" : "paths") {
                 ViewModeToggle(mode: $mode)
             }
-            switch mode {
-            case .cards: cards
-            case .table: table
+            if filteredIngresses.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "ingresses")
+            } else {
+                switch mode {
+                case .cards: cards
+                case .table: table
+                }
             }
         }
     }

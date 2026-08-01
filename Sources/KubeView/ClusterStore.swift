@@ -63,9 +63,14 @@ final class ClusterStore: ObservableObject {
     @Published var podMetrics: [PodMetrics] = []
     @Published var metricsAvailable: Bool = true
     @Published var serverVersion: String?
-    @Published var loading = false
     @Published var lastError: String?
     @Published var lastRefresh: Date?
+
+    /// True only until the first refresh resolves either way. A failed first
+    /// refresh leaves `lastRefresh` nil forever, so the error has to clear this
+    /// too — otherwise every list would spin indefinitely instead of surfacing
+    /// `lastError`.
+    var isFirstLoad: Bool { lastRefresh == nil && lastError == nil }
 
     // Precomputed derived state — updated in `refresh()`. Views read these
     // without recomputing per frame.
@@ -106,8 +111,6 @@ final class ClusterStore: ObservableObject {
     }
 
     func refresh() async {
-        loading = true
-        defer { loading = false }
         let isSlowCycle = (refreshCounter % slowCycleRatio == 0)
         refreshCounter &+= 1
         if serverVersion == nil {

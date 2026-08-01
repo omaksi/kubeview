@@ -12,9 +12,13 @@ struct ServicesView: View {
     var body: some View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "services") { ViewModeToggle(mode: $mode) }
-            switch mode {
-            case .cards: cards
-            case .table: table
+            if filtered.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "services")
+            } else {
+                switch mode {
+                case .cards: cards
+                case .table: table
+                }
             }
         }
     }

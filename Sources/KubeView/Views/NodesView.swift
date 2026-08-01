@@ -17,9 +17,13 @@ struct NodesView: View {
             }
             .padding(8).background(.bar)
 
-            switch mode {
-            case .cards: cards
-            case .table: table
+            if store.nodes.isEmpty && store.isFirstLoad {
+                LoadingPlaceholder(label: "nodes")
+            } else {
+                switch mode {
+                case .cards: cards
+                case .table: table
+                }
             }
         }
     }
