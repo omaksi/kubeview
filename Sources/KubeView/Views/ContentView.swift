@@ -218,7 +218,9 @@ struct ClusterBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(manager.activeOrder, id: \.self) { ctx in
-                    ClusterPill(context: ctx)
+                    if let store = manager.stores[ctx] {
+                        ClusterPill(context: ctx, store: store)
+                    }
                 }
                 addMenu
             }
@@ -247,25 +249,42 @@ struct ClusterBar: View {
     }
 }
 
+/// Takes the store as an `@ObservedObject` rather than reaching through
+/// `manager.stores[…]`. The manager only republishes when the *dictionary*
+/// changes, so a pill that looked the store up would never re-render when its
+/// health or connection state changed.
 struct ClusterPill: View {
     let context: String
+    @ObservedObject var store: ClusterStore
     @EnvironmentObject var manager: ClusterManager
 
-    private var store: ClusterStore? { manager.stores[context] }
     private var isSelected: Bool { manager.selected == context }
+
     private var health: Color {
-        guard let s = store else { return .secondary }
-        if !s.unhealthyPods.isEmpty { return .red }
-        if !s.unhealthyWorkloads.isEmpty { return .orange }
+        if let fault = store.fault { return fault.color }
+        if store.lastRefresh == nil { return .secondary }
+        if !store.unhealthyPods.isEmpty { return .red }
+        if !store.unhealthyWorkloads.isEmpty { return .orange }
         return .green
     }
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle().fill(health).frame(width: 7, height: 7)
+            if let fault = store.fault {
+                Image(systemName: fault.icon)
+                    .font(.caption2)
+                    .foregroundStyle(fault.color)
+            } else {
+                Circle().fill(health).frame(width: 7, height: 7)
+            }
             Text(context)
                 .font(.caption.monospaced())
                 .lineLimit(1)
+            if let fault = store.fault {
+                Text(fault.short)
+                    .font(.caption2)
+                    .foregroundStyle(fault.color)
+            }
             Button {
                 manager.deactivate(context)
             } label: {
@@ -276,6 +295,7 @@ struct ClusterPill: View {
             .buttonStyle(.plain)
             .help("Remove from active clusters")
         }
+        .help(store.lastError ?? context)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(isSelected ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08),

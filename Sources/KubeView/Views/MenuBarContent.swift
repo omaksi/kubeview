@@ -106,6 +106,8 @@ struct ClusterSummaryRow: View {
     @EnvironmentObject var manager: ClusterManager
 
     private var health: Color {
+        if let fault = store.fault { return fault.color }
+        if store.lastRefresh == nil { return .secondary }
         if !store.unhealthyPods.isEmpty { return .red }
         if !store.unhealthyWorkloads.isEmpty { return .orange }
         return .green
@@ -122,9 +124,15 @@ struct ClusterSummaryRow: View {
                     }
                 }
                 HStack(spacing: 10) {
-                    Text("\(store.podsRunning) running").font(.caption).foregroundStyle(.secondary)
-                    if !store.unhealthyAll.isEmpty {
-                        Text("\(store.unhealthyAll.count) unhealthy").font(.caption).foregroundStyle(.orange)
+                    if let fault = store.fault {
+                        Label(fault.short, systemImage: fault.icon)
+                            .font(.caption)
+                            .foregroundStyle(fault.color)
+                    } else {
+                        Text("\(store.podsRunning) running").font(.caption).foregroundStyle(.secondary)
+                        if !store.unhealthyAll.isEmpty {
+                            Text("\(store.unhealthyAll.count) unhealthy").font(.caption).foregroundStyle(.orange)
+                        }
                     }
                 }
             }

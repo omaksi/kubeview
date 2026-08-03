@@ -112,6 +112,25 @@ scripts/
   | `get --raw /version` | Yes — 5.2s for a 5s setting |
   | `get pods --all-namespaces` | **No** — 10s setting still running past 15s (API discovery runs first) |
   | any context with no credentials | Irrelevant — kubectl prompts on stdin; null stdin turns it into a 0.04s EOF failure |
+- **Connection state is typed, not string-matched at call sites.**
+  `ClusterStore.fault: ConnectionFault?` is set once by `classify`, and the
+  pill, menu bar row, menu bar icon and error banner all read it. Adding a new
+  surface means reading `fault`, never re-parsing `lastError`.
+  `classify` matches kubectl's *real* wording — it never says "timed out":
+  | Failure | kubectl says |
+  |---|---|
+  | black-holed | `Unable to connect to the server: context deadline exceeded` |
+  | refused | `The connection to the server host:port was refused` |
+  | bad DNS | `dial tcp: lookup host: no such host` |
+  | no credentials | `Please enter Username: error: EOF` |
+  Order matters: TLS and auth surface *through* a connection error
+  (`Unable to connect to the server: x509: …`), so specific causes are tested
+  before the generic connectivity patterns.
+- **A disconnected cluster must never render as healthy.** The green dot used to
+  mean "no unhealthy pods", which a cluster with *no* pods trivially satisfies —
+  so an unreachable cluster showed green in the pill and a plain helm in the
+  menu bar. Any new health surface checks `fault` first, then `lastRefresh ==
+  nil` (grey, never contacted), then pod/workload health.
 - **Preflight before fanning out.** `ClusterStore.preflight()` runs one
   `get --raw /version` (5s) before the ~18-call batch, and only while the
   cluster isn't known healthy. Unreachable now costs ~5s instead of ~22s,

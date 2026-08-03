@@ -34,8 +34,12 @@ struct KubeViewApp: App {
     }
 
     private var menuIcon: String {
+        let anyFault = manager.activeStores.contains { $0.fault != nil }
         let anyFailing = manager.activeStores.contains { !$0.unhealthyPods.isEmpty }
         let anyDegraded = manager.activeStores.contains { !$0.unhealthyWorkloads.isEmpty }
+        // A cluster we can't reach is not "healthy" — before this it showed the
+        // plain helm, because a disconnected store has no unhealthy pods to count.
+        if anyFault    { return "exclamationmark.triangle.fill" }
         if anyFailing  { return "exclamationmark.triangle.fill" }
         if anyDegraded { return "exclamationmark.circle" }
         return "helm"

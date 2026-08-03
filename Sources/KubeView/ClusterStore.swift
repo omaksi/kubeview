@@ -38,6 +38,47 @@ struct NodeUsage: Identifiable, Hashable {
     var memoryPercent: Double { memoryCapacityBytes > 0 ? (memoryUsedBytes / memoryCapacityBytes) * 100 : 0 }
 }
 
+enum ConnectionFault: Equatable {
+    case unreachable
+    case notLoggedIn
+    case forbidden
+    case tls
+    case kubectlMissing
+    case other
+
+    /// Fits inside a cluster pill — anything longer wraps or truncates.
+    var short: String {
+        switch self {
+        case .unreachable:    return "unreachable"
+        case .notLoggedIn:    return "not logged in"
+        case .forbidden:      return "no access"
+        case .tls:            return "TLS error"
+        case .kubectlMissing: return "no kubectl"
+        case .other:          return "error"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .unreachable:    return "wifi.slash"
+        case .notLoggedIn:    return "lock.fill"
+        case .forbidden:      return "hand.raised.fill"
+        case .tls:            return "lock.trianglebadge.exclamationmark"
+        case .kubectlMissing: return "questionmark.circle"
+        case .other:          return "exclamationmark.triangle.fill"
+        }
+    }
+
+    /// Red is for "your cluster is broken". A cluster we simply can't talk to is
+    /// orange — the workloads may well be fine, we just can't see them.
+    var color: Color {
+        switch self {
+        case .forbidden, .notLoggedIn: return .orange
+        default:                       return .red
+        }
+    }
+}
+
 @MainActor
 final class ClusterStore: ObservableObject {
     let context: String
@@ -76,6 +117,13 @@ final class ClusterStore: ObservableObject {
     /// it has been running long enough to be worth mentioning.
     @Published private(set) var activity: String?
     @Published private(set) var activitySince: Date?
+
+    /// Why the cluster isn't answering, when it isn't. Typed rather than derived
+    /// from `lastError` text at each call site, so the pill, the menu bar and
+    /// the banner all agree.
+    @Published private(set) var fault: ConnectionFault?
+
+    var isConnected: Bool { fault == nil && lastRefresh != nil }
 
     // Precomputed derived state — updated in `refresh()`. Views read these
     // without recomputing per frame.
@@ -134,34 +182,55 @@ final class ClusterStore: ObservableObject {
             return true
         } catch {
             let raw = error.localizedDescription
-            lastError = Self.friendlyMessage(raw, context: context)
+            setFault(raw)
             LogStore.record(.error, "preflight failed", context: context, detail: raw)
             setActivity(nil)
             return false
         }
     }
 
-    static func friendlyMessage(_ raw: String, context: String) -> String {
+    /// Order matters. TLS and auth failures are reported *through* a connection
+    /// error ("Unable to connect to the server: x509: …"), so the specific
+    /// causes have to be tested before the generic connectivity patterns.
+    ///
+    /// Patterns are kubectl's real output, captured per failure mode — it never
+    /// says "timed out" for any of them:
+    ///   black-holed  → "Unable to connect to the server: context deadline exceeded"
+    ///   refused      → "The connection to the server host:port was refused"
+    ///   bad DNS      → "…dial tcp: lookup host: no such host"
+    ///   no creds     → "Please enter Username: error: EOF"
+    static func classify(_ raw: String, context: String) -> (ConnectionFault, String) {
         let lower = raw.lowercased()
-        if lower.contains("timed out") || lower.contains("i/o timeout") || lower.contains("no route to host") {
-            return "Can't reach \(context) — cluster unreachable (VPN or network down?)"
+        func any(_ needles: [String]) -> Bool { needles.contains { lower.contains($0) } }
+
+        if any(["unauthorized", "401"]) {
+            return (.notLoggedIn, "Not authenticated to \(context) — your credentials expired or need a re-login")
         }
-        if lower.contains("unauthorized") || lower.contains("401") {
-            return "Not authenticated to \(context) — your credentials expired or need a re-login"
+        if any(["please enter username", "error: eof",
+                "no configuration has been provided", "unable to load", "credentials"]) {
+            return (.notLoggedIn, "Not logged in to \(context) — no usable credentials in your kubeconfig")
         }
-        if lower.contains("forbidden") || lower.contains("403") {
-            return "Access denied on \(context) — this account lacks permission"
+        if any(["forbidden", "403"]) {
+            return (.forbidden, "Access denied on \(context) — this account lacks permission")
         }
-        if lower.contains("credentials") || lower.contains("no configuration has been provided") {
-            return "No usable credentials for \(context) — check your kubeconfig"
+        if any(["x509", "certificate", "tls:"]) {
+            return (.tls, "TLS problem talking to \(context) — \(raw)")
         }
-        if lower.contains("certificate") || lower.contains("x509") {
-            return "TLS problem talking to \(context) — \(raw)"
+        if any(["context deadline exceeded", "unable to connect to the server",
+                "was refused", "connection refused", "no such host", "dial tcp",
+                "i/o timeout", "client.timeout", "timed out", "no route to host"]) {
+            return (.unreachable, "Can't reach \(context) — cluster unreachable (VPN or network down?)")
         }
-        if lower.contains("not found") && lower.contains("kubectl") {
-            return "kubectl not found on PATH"
+        if lower.contains("kubectl") && any(["not found", "not executable"]) {
+            return (.kubectlMissing, "kubectl not found on PATH")
         }
-        return raw
+        return (.other, raw)
+    }
+
+    private func setFault(_ raw: String) {
+        let (fault, message) = Self.classify(raw, context: context)
+        self.fault = fault
+        self.lastError = message
     }
 
     func refresh() async {
@@ -231,13 +300,14 @@ final class ClusterStore: ObservableObject {
             self.namespaceSummaries = computeNamespaceSummaries(unhealthyWorkloads: uw)
 
             self.lastError = nil
+            self.fault = nil
             self.lastRefresh = Date()
             LogStore.record(.debug,
                             "refresh cycle \(cycle) ok in \(Int(Date().timeIntervalSince(started) * 1000))ms — \(pods.count) pods, \(namespaces.count) namespaces",
                             context: context)
         } catch {
             let raw = error.localizedDescription
-            self.lastError = Self.friendlyMessage(raw, context: context)
+            setFault(raw)
             LogStore.record(.error,
                             "refresh cycle \(cycle) failed after \(Int(Date().timeIntervalSince(started) * 1000))ms",
                             context: context, detail: raw)
