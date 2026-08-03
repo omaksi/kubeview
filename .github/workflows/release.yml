@@ -167,7 +167,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$HAS_DEV_ID" = "true" ]; then
-            INSTALL="brew install --cask kubeview"
+            INSTALL="brew trust omaksi/kubeview
+          brew install --cask kubeview"
             NOTE="Signed with a Developer ID certificate and notarized by Apple."
           else
             INSTALL="brew install --cask kubeview --no-quarantine"

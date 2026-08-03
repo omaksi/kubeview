@@ -10,9 +10,15 @@ Native macOS desktop app for viewing Kubernetes clusters across multiple context
 
 ```sh
 brew tap omaksi/kubeview
+brew trust omaksi/kubeview
 brew install --cask kubeview
 open -a KubeView
 ```
+
+`brew trust` is required by Homebrew 6+ for any third-party tap — installing a
+cask evaluates Ruby from this repo, so Homebrew asks you to opt in once per
+machine. Without it, `install` *and* `upgrade` both fail with "Refusing to load
+cask from untrusted tap".
 
 Releases from v0.2.1 on are signed with a Developer ID certificate and notarized
 by Apple, so they launch without Gatekeeper warnings. Older releases were ad-hoc
