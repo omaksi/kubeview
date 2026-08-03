@@ -36,7 +36,7 @@ struct KubeViewApp: App {
         let anyDegraded = manager.activeStores.contains { !$0.unhealthyWorkloads.isEmpty }
         if anyFailing  { return "exclamationmark.triangle.fill" }
         if anyDegraded { return "exclamationmark.circle" }
-        return "binoculars.fill"
+        return "helm"
     }
 }
 

@@ -35,29 +35,67 @@ struct MenuBarContent: View {
         .padding(10).frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var inactiveContexts: [String] {
+        manager.availableContexts.filter { !manager.activeOrder.contains($0) }
+    }
+
+    @ViewBuilder
     private var addClusterMenu: some View {
-        Menu("Activate Cluster…") {
-            ForEach(manager.availableContexts.filter { !manager.activeOrder.contains($0) }, id: \.self) { ctx in
-                Button(ctx) { manager.activate(ctx); manager.select(ctx) }
+        if inactiveContexts.isEmpty {
+            Text(manager.availableContexts.isEmpty ? "No contexts in kubeconfig" : "All contexts active")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+        } else {
+            Menu("Activate Cluster…") {
+                ForEach(inactiveContexts, id: \.self) { ctx in
+                    Button(ctx) { manager.activate(ctx); manager.select(ctx) }
+                }
             }
+            .menuStyle(.borderlessButton)
+            .padding(.horizontal, 10).padding(.vertical, 6)
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
     }
 
     private var actions: some View {
-        VStack(spacing: 4) {
-            Button("Open Window") {
+        VStack(spacing: 0) {
+            MenuActionRow(title: "Open Window") {
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             }
-            Button("Refresh All") {
+            MenuActionRow(title: "Refresh All") {
                 for s in manager.activeStores { Task { await s.refresh() } }
             }
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            MenuActionRow(title: "Quit") { NSApplication.shared.terminate(nil) }
         }
-        .buttonStyle(.borderless)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
+        .padding(.vertical, 4)
+    }
+}
+
+/// A menu bar panel is a non-activating window that never becomes key, so
+/// standard button styles draw in their inactive appearance and read as
+/// disabled. Draw the row instead, and keep the hit area full-width — a bare
+/// `Button` in a VStack is only as wide as its label, which staggers rows.
+struct MenuActionRow: View {
+    let title: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(title).font(.callout).foregroundStyle(.primary)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering ? Color.primary.opacity(0.08) : .clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
