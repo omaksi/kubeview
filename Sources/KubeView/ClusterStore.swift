@@ -112,7 +112,11 @@ final class ClusterStore: ObservableObject {
 
     func refresh() async {
         let isSlowCycle = (refreshCounter % slowCycleRatio == 0)
+        let cycle = refreshCounter
+        let started = Date()
         refreshCounter &+= 1
+        LogStore.record(.debug, "refresh cycle \(cycle) start\(isSlowCycle ? " (slow)" : "")",
+                        context: context)
         if serverVersion == nil {
             serverVersion = (try? await kubectl.serverVersion()) ?? nil
         }
@@ -171,8 +175,14 @@ final class ClusterStore: ObservableObject {
 
             self.lastError = nil
             self.lastRefresh = Date()
+            LogStore.record(.debug,
+                            "refresh cycle \(cycle) ok in \(Int(Date().timeIntervalSince(started) * 1000))ms — \(pods.count) pods, \(namespaces.count) namespaces",
+                            context: context)
         } catch {
             self.lastError = error.localizedDescription
+            LogStore.record(.error,
+                            "refresh cycle \(cycle) failed after \(Int(Date().timeIntervalSince(started) * 1000))ms",
+                            context: context, detail: error.localizedDescription)
         }
     }
 

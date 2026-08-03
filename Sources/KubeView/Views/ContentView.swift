@@ -8,6 +8,7 @@ enum NavSection: String, CaseIterable, Identifiable {
     case pvcs, storageclasses
     case configmaps, secrets, serviceaccounts, irsa
     case linkerd
+    case diagnostics
     var id: String { rawValue }
 
     var title: String {
@@ -34,6 +35,7 @@ enum NavSection: String, CaseIterable, Identifiable {
         case .serviceaccounts: return "ServiceAccounts"
         case .irsa: return "IRSA"
         case .linkerd: return "Linkerd"
+        case .diagnostics: return "Diagnostics"
         }
     }
 
@@ -61,6 +63,7 @@ enum NavSection: String, CaseIterable, Identifiable {
         case .serviceaccounts: return "person.badge.key"
         case .irsa: return "person.badge.shield.checkmark"
         case .linkerd: return "link"
+        case .diagnostics: return "ladybug"
         }
     }
 }
@@ -82,6 +85,7 @@ extension NavSection {
              .storageclasses, .deployments:
             return true
         case .events:         return true
+        case .diagnostics:    return true
         case .statefulsets:   return !store.statefulSets.isEmpty
         case .replicasets:    return !store.replicaSets.isEmpty
         case .daemonsets:     return !store.daemonSets.isEmpty
@@ -106,6 +110,7 @@ private let navGroups: [NavGroup] = [
     NavGroup(title: "Storage", items: [.pvcs, .storageclasses]),
     NavGroup(title: "Config & RBAC", items: [.configmaps, .secrets, .serviceaccounts, .irsa]),
     NavGroup(title: "Service Mesh", items: [.linkerd]),
+    NavGroup(title: "Diagnostics", items: [.diagnostics]),
 ]
 
 enum AppRoute: Hashable {
@@ -201,6 +206,7 @@ struct ContentView: View {
         case .serviceaccounts: ServiceAccountsView(irsaOnly: false)
         case .irsa: ServiceAccountsView(irsaOnly: true)
         case .linkerd: LinkerdView()
+        case .diagnostics: DiagnosticsView()
         }
     }
 }

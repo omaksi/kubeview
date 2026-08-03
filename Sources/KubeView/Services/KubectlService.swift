@@ -28,11 +28,33 @@ actor KubectlService {
         self.context = context
     }
 
-    func run(_ args: [String]) async throws -> Data {
+    /// Every kubectl invocation is bounded three ways, because each covers a
+    /// different hang:
+    ///
+    /// - null stdin — kubectl prompts for basic-auth credentials when a context
+    ///   has none, and a GUI app has nobody to answer. Turns a hang into an
+    ///   instant EOF failure.
+    /// - `--request-timeout` — bounds a server that accepts the connection then
+    ///   stalls. Measured: does **not** bound the TCP dial, so it is useless on
+    ///   its own against a black-holed endpoint (VPN down, firewall dropping).
+    /// - the watchdog — the only bound that survives a dropped-packet endpoint.
+    ///   Verified against a black-holed IP: kubectl ran >110s unbounded, and
+    ///   was killed at timeout × 1.5 with the watchdog in place.
+    ///
+    /// `nonisolated` on purpose: the previous version blocked inside the actor,
+    /// so `refresh()`'s `async let` batch serialised and each call pinned a
+    /// cooperative thread. Only immutable state is touched here.
+    nonisolated func run(_ args: [String], timeout: TimeInterval = 15) async throws -> Data {
         var args = args
         if let ctx = context, !args.contains("--context") {
             args = ["--context", ctx] + args
         }
+        if !args.contains(where: { $0.hasPrefix("--request-timeout") }) {
+            args.append("--request-timeout=\(Int(timeout))s")
+        }
+        let display = "kubectl " + args.joined(separator: " ")
+        let started = Date()
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = args
@@ -41,6 +63,7 @@ actor KubectlService {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        process.standardInput = FileHandle.nullDevice
 
         var env = ProcessInfo.processInfo.environment
         // Ensure PATH includes Homebrew for exec auth plugins (aws, gke-gcloud-auth-plugin, etc.)
@@ -48,16 +71,44 @@ actor KubectlService {
         env["PATH"] = env["PATH"].map { "\($0):\(extra)" } ?? extra
         process.environment = env
 
-        do { try process.run() } catch { throw KubectlError.notFound }
+        do { try process.run() } catch {
+            LogStore.record(.error, "kubectl not executable", context: context, detail: binary)
+            throw KubectlError.notFound
+        }
 
-        let data = (try? stdout.fileHandleForReading.readToEnd()) ?? Data()
-        let errData = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
-        process.waitUntilExit()
+        let watchdog = Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1.5 * 1_000_000_000))
+            guard process.isRunning else { return }
+            LogStore.record(.warn, "killing hung kubectl after \(Int(timeout * 1.5))s",
+                            context: context, detail: display)
+            process.terminate()
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+        defer { watchdog.cancel() }
 
+        // readToEnd/waitUntilExit block; keep them off the cooperative pool.
+        let (data, errData) = await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let out = (try? stdout.fileHandleForReading.readToEnd()) ?? Data()
+                let err = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
+                process.waitUntilExit()
+                cont.resume(returning: (out, err))
+            }
+        }
+
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
         guard process.terminationStatus == 0 else {
-            let msg = String(data: errData, encoding: .utf8) ?? "exit \(process.terminationStatus)"
+            let stderrText = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let killed = process.terminationReason == .uncaughtSignal
+            let msg = killed
+                ? "timed out after \(Int(timeout * 1.5))s — cluster unreachable?"
+                : (stderrText.isEmpty ? "exit \(process.terminationStatus)" : stderrText)
+            LogStore.record(.error, "\(display) failed in \(ms)ms", context: context, detail: msg)
             throw KubectlError.failed(msg)
         }
+        LogStore.record(.debug, "\(display) → \(data.count)B in \(ms)ms", context: context)
         return data
     }
 

@@ -30,6 +30,7 @@ macOS 14+. Shells out to `kubectl` (no native k8s client) — intentional for MV
 - **Cards-first**: every list view starts as cards; `ViewModeToggle` switches to a table.
 - **First-load placeholder** (`LoadingPlaceholder`): when a list is empty AND `store.isFirstLoad`, show a centered spinner + "Loading <label>…" instead of an empty grid. Background polling stays silent (no top progress bars or spinners).
 - **Refresh errors** (`ErrorBanner`): mounted once in `ClusterContentView`, so a failure is visible from every view, not just Overview. `ClusterStore.isFirstLoad` is `lastRefresh == nil && lastError == nil` — the error half matters, because `lastRefresh` is only set on the success path and a cluster that never connects would otherwise leave every list spinning forever.
+- **Diagnostics** (`LogStore` + `DiagnosticsView`): 2000-entry in-memory ring buffer, never written to disk. Every kubectl call logs its command line, duration, byte count and stderr; every refresh cycle logs start/outcome. Sidebar → Diagnostics gives level filter, text filter, follow-tail, and Copy/Save/Report-Issue. `LogStore.record` is `nonisolated` and hops to the main actor, so the `KubectlService` actor can call it directly.
 - **Menu bar**: `MenuBarExtra` with `.menuBarExtraStyle(.window)`; aggregates health across all active clusters, per-cluster summary rows with deactivate buttons.
 - **Refresh cadence**: 5s for everything except secrets + configmaps which are on a 30s "slow cycle" (they're the largest payloads; `slowCycleRatio = 6` in `ClusterStore`). Metrics-server failures are swallowed so the rest keeps updating. Toolbar refresh button is always enabled (no disable-while-loading flicker).
 - **Shared nav state** (`NavState`): `selected: NavSection?` + `path: [AppRoute]` live in an `@MainActor ObservableObject` injected at app level. Sidebar selection clears the nav path on change. `AppRoute` enum wraps `NamespaceRoute` / `PodRoute` so the stack is introspectable.
@@ -101,6 +102,15 @@ scripts/
 - **Refresh is polled, not watched.** Each `ClusterStore.start()` runs a 5s loop.
   Don't add watch streams — if you need push updates, we'd move to the native
   k8s Swift client (discuss first — it's a larger change).
+- **Never let a kubectl call be unbounded.** `KubectlService.run` bounds every
+  invocation with null stdin + `--request-timeout` + a kill watchdog. Measured:
+  `--request-timeout` alone does *not* cover the TCP dial — against a
+  black-holed IP kubectl ran >110s and only the watchdog stopped it. An
+  unbounded call means `refresh()` never returns, so neither `lastRefresh` nor
+  `lastError` is set and the UI spins forever with nothing to show.
+- **`run` is `nonisolated`.** It was actor-isolated and blocking, which silently
+  serialised the whole `async let` batch in `refresh()` and pinned a cooperative
+  thread per call. Keep the blocking reads on `DispatchQueue.global`.
 - **No `AnyView` in view chains.** `ViewHeader` is generic over its trailing view;
   keep it that way so SwiftUI can diff properly.
 - **No emojis in source or UI** unless explicitly requested. The per-resource

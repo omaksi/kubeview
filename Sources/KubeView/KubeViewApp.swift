@@ -7,6 +7,7 @@ struct KubeViewApp: App {
     @StateObject private var search = SearchState()
     @StateObject private var stars = StarStore()
     @StateObject private var nav = NavState()
+    @StateObject private var logs = LogStore.shared
 
     var body: some Scene {
         WindowGroup("KubeView", id: "main") {
@@ -16,6 +17,7 @@ struct KubeViewApp: App {
                 .environmentObject(search)
                 .environmentObject(stars)
                 .environmentObject(nav)
+                .environmentObject(logs)
                 .frame(minWidth: 900, minHeight: 560)
         }
         .windowStyle(.titleBar)
