@@ -34,12 +34,13 @@ actor KubectlService {
     /// - null stdin — kubectl prompts for basic-auth credentials when a context
     ///   has none, and a GUI app has nobody to answer. Turns a hang into an
     ///   instant EOF failure.
-    /// - `--request-timeout` — bounds a server that accepts the connection then
-    ///   stalls. Measured: does **not** bound the TCP dial, so it is useless on
-    ///   its own against a black-holed endpoint (VPN down, firewall dropping).
-    /// - the watchdog — the only bound that survives a dropped-packet endpoint.
-    ///   Verified against a black-holed IP: kubectl ran >110s unbounded, and
-    ///   was killed at timeout × 1.5 with the watchdog in place.
+    /// - `--request-timeout` — bounds one API request. It is reliable for
+    ///   `get --raw` (measured 5.2s for a 5s setting against a black-holed IP)
+    ///   but NOT for `get <resource>`, which runs API discovery first: a 10s
+    ///   setting was still running past 15s. Never rely on it alone.
+    /// - the watchdog — the backstop that covers the discovery overrun above,
+    ///   and anything else kubectl does outside a single request. Verified
+    ///   killing a wedged `get pods` at timeout × 1.5.
     ///
     /// `nonisolated` on purpose: the previous version blocked inside the actor,
     /// so `refresh()`'s `async let` batch serialised and each call pinned a

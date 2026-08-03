@@ -103,11 +103,21 @@ scripts/
   Don't add watch streams — if you need push updates, we'd move to the native
   k8s Swift client (discuss first — it's a larger change).
 - **Never let a kubectl call be unbounded.** `KubectlService.run` bounds every
-  invocation with null stdin + `--request-timeout` + a kill watchdog. Measured:
-  `--request-timeout` alone does *not* cover the TCP dial — against a
-  black-holed IP kubectl ran >110s and only the watchdog stopped it. An
+  invocation with null stdin + `--request-timeout` + a kill watchdog. An
   unbounded call means `refresh()` never returns, so neither `lastRefresh` nor
   `lastError` is set and the UI spins forever with nothing to show.
+  Measured, and the reason all three bounds exist:
+  | Call | `--request-timeout` honoured? |
+  |---|---|
+  | `get --raw /version` | Yes — 5.2s for a 5s setting |
+  | `get pods --all-namespaces` | **No** — 10s setting still running past 15s (API discovery runs first) |
+  | any context with no credentials | Irrelevant — kubectl prompts on stdin; null stdin turns it into a 0.04s EOF failure |
+- **Preflight before fanning out.** `ClusterStore.preflight()` runs one
+  `get --raw /version` (5s) before the ~18-call batch, and only while the
+  cluster isn't known healthy. Unreachable now costs ~5s instead of ~22s,
+  bad credentials ~0.04s, and we don't spawn 18 doomed processes. Errors go
+  through `friendlyMessage` so the banner names the cause rather than echoing
+  kubectl's stderr.
 - **`run` is `nonisolated`.** It was actor-isolated and blocking, which silently
   serialised the whole `async let` batch in `refresh()` and pinned a cooperative
   thread per call. Keep the blocking reads on `DispatchQueue.global`.
@@ -124,6 +134,11 @@ scripts/
   collection a view renders is empty and `store.isFirstLoad`. Don't add top
   progress bars or per-poll spinners — they show every 5s and feel broken.
   Background refresh is intentionally silent.
+- **A spinner past ~2s must say what it's waiting for.** `LoadingPlaceholder`
+  pulls `store.activity` / `activitySince` from the environment (no call site
+  passes them), and after 2s adds the current phase plus a live elapsed count,
+  after 8s a pointer to Diagnostics. Set phases via `setActivity` in
+  `ClusterStore`, not by threading state through views.
 - **Never gate a spinner on `lastRefresh` alone.** `refresh()` sets
   `lastRefresh` only on the success path, so an unreachable cluster leaves it
   nil forever. Gate on `store.isFirstLoad`, which also clears once `lastError`

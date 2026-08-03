@@ -72,6 +72,11 @@ final class ClusterStore: ObservableObject {
     /// `lastError`.
     var isFirstLoad: Bool { lastRefresh == nil && lastError == nil }
 
+    /// What the store is doing right now, surfaced by `LoadingPlaceholder` once
+    /// it has been running long enough to be worth mentioning.
+    @Published private(set) var activity: String?
+    @Published private(set) var activitySince: Date?
+
     // Precomputed derived state — updated in `refresh()`. Views read these
     // without recomputing per frame.
     @Published private(set) var namespaceSummaries: [NamespaceSummary] = []
@@ -110,6 +115,55 @@ final class ClusterStore: ObservableObject {
         slowTask = nil
     }
 
+    private func setActivity(_ text: String?) {
+        activity = text
+        activitySince = text == nil ? nil : Date()
+    }
+
+    /// One cheap call that exercises DNS, TCP, TLS and auth before we fan out
+    /// into ~18 parallel fetches. Without it an unreachable or logged-out
+    /// cluster costs a full watchdog timeout (~22s) *and* spawns 18 doomed
+    /// kubectl processes; with it we fail in ~7s with a message that names the
+    /// actual problem. Skipped once the cluster is known healthy, so the steady
+    /// state doesn't pay for an extra process every 5s.
+    private func preflight() async -> Bool {
+        guard lastRefresh == nil || lastError != nil else { return true }
+        setActivity("Contacting cluster")
+        do {
+            _ = try await kubectl.run(["get", "--raw", "/version"], timeout: 5)
+            return true
+        } catch {
+            let raw = error.localizedDescription
+            lastError = Self.friendlyMessage(raw, context: context)
+            LogStore.record(.error, "preflight failed", context: context, detail: raw)
+            setActivity(nil)
+            return false
+        }
+    }
+
+    static func friendlyMessage(_ raw: String, context: String) -> String {
+        let lower = raw.lowercased()
+        if lower.contains("timed out") || lower.contains("i/o timeout") || lower.contains("no route to host") {
+            return "Can't reach \(context) — cluster unreachable (VPN or network down?)"
+        }
+        if lower.contains("unauthorized") || lower.contains("401") {
+            return "Not authenticated to \(context) — your credentials expired or need a re-login"
+        }
+        if lower.contains("forbidden") || lower.contains("403") {
+            return "Access denied on \(context) — this account lacks permission"
+        }
+        if lower.contains("credentials") || lower.contains("no configuration has been provided") {
+            return "No usable credentials for \(context) — check your kubeconfig"
+        }
+        if lower.contains("certificate") || lower.contains("x509") {
+            return "TLS problem talking to \(context) — \(raw)"
+        }
+        if lower.contains("not found") && lower.contains("kubectl") {
+            return "kubectl not found on PATH"
+        }
+        return raw
+    }
+
     func refresh() async {
         let isSlowCycle = (refreshCounter % slowCycleRatio == 0)
         let cycle = refreshCounter
@@ -117,6 +171,9 @@ final class ClusterStore: ObservableObject {
         refreshCounter &+= 1
         LogStore.record(.debug, "refresh cycle \(cycle) start\(isSlowCycle ? " (slow)" : "")",
                         context: context)
+        guard await preflight() else { return }
+        setActivity("Loading cluster resources")
+        defer { setActivity(nil) }
         if serverVersion == nil {
             serverVersion = (try? await kubectl.serverVersion()) ?? nil
         }
@@ -179,10 +236,11 @@ final class ClusterStore: ObservableObject {
                             "refresh cycle \(cycle) ok in \(Int(Date().timeIntervalSince(started) * 1000))ms — \(pods.count) pods, \(namespaces.count) namespaces",
                             context: context)
         } catch {
-            self.lastError = error.localizedDescription
+            let raw = error.localizedDescription
+            self.lastError = Self.friendlyMessage(raw, context: context)
             LogStore.record(.error,
                             "refresh cycle \(cycle) failed after \(Int(Date().timeIntervalSince(started) * 1000))ms",
-                            context: context, detail: error.localizedDescription)
+                            context: context, detail: raw)
         }
     }
 

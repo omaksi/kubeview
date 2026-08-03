@@ -56,6 +56,11 @@ struct ViewHeader<Trailing: View>: View {
 /// refresh spins forever.
 struct LoadingPlaceholder: View {
     let label: String
+    @EnvironmentObject var store: ClusterStore
+
+    /// Below this, extra chatter is noise — a normal first load resolves well
+    /// inside it. Past it, silence reads as a hang, so say what we're waiting on.
+    private let chattyAfter: TimeInterval = 2
 
     var body: some View {
         VStack(spacing: 12) {
@@ -63,6 +68,26 @@ struct LoadingPlaceholder: View {
             Text("Loading \(label)…")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+
+            if let since = store.activitySince {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let elapsed = ctx.date.timeIntervalSince(since)
+                    if elapsed >= chattyAfter {
+                        VStack(spacing: 6) {
+                            Text("\(store.activity ?? "Working")… \(Int(elapsed))s")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            if elapsed >= 8 {
+                                Text("Taking longer than usual. Sidebar → Diagnostics shows every kubectl call.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
