@@ -19,7 +19,7 @@ jobs:
       HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }}
       HAS_DEV_ID: ${{ secrets.DEV_ID_CERT_P12 != '' && 'true' || 'false' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Resolve version
         id: ver

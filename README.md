@@ -10,12 +10,13 @@ Native macOS desktop app for viewing Kubernetes clusters across multiple context
 
 ```sh
 brew tap omaksi/kubeview
-brew install --cask kubeview --no-quarantine
+brew install --cask kubeview
 open -a KubeView
 ```
 
-`--no-quarantine` is required because the app is ad-hoc signed (not notarized).
-Alternatively, after install: `xattr -dr com.apple.quarantine /Applications/KubeView.app`.
+Releases from v0.2.1 on are signed with a Developer ID certificate and notarized
+by Apple, so they launch without Gatekeeper warnings. Older releases were ad-hoc
+signed and need `brew install --cask kubeview --no-quarantine`.
 
 Upgrade to the latest release:
 
@@ -26,8 +27,8 @@ brew update && brew upgrade --cask kubeview
 ### Direct download
 
 Grab `KubeView-vX.Y.Z.zip` from the [Releases](https://github.com/omaksi/kubeview/releases)
-page, unzip, drag into `/Applications`. First launch: right-click the app → **Open**
-(Gatekeeper prompts once; subsequent launches don't).
+page, unzip, drag into `/Applications`, and open it — the notarization ticket is
+stapled to the app, so it launches normally with no right-click workaround.
 
 ### Requirements
 
