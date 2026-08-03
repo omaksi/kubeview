@@ -17,6 +17,7 @@ jobs:
     runs-on: macos-14
     env:
       HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }}
+      HAS_DEV_ID: ${{ secrets.DEV_ID_CERT_P12 != '' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -77,15 +78,84 @@ jobs:
           </plist>
           PLIST
 
-      - name: Ad-hoc sign
-        run: codesign --force --deep --sign - build/KubeView.app
+      # Imports into a throwaway keychain rather than login.keychain — the
+      # runner is ephemeral, but a temp keychain keeps the private key out of
+      # any step that doesn't need it and dies with the job.
+      - name: Import Developer ID certificate
+        if: env.HAS_DEV_ID == 'true'
+        env:
+          DEV_ID_CERT_P12: ${{ secrets.DEV_ID_CERT_P12 }}
+          DEV_ID_CERT_PASSWORD: ${{ secrets.DEV_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW=$(uuidgen)
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$DEV_ID_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$DEV_ID_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN" > /dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain
+          # Read the identity back rather than hardcoding the name — it embeds
+          # the team ID and has to match the cert byte for byte.
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No Developer ID Application identity in the imported .p12"
+            exit 1
+          fi
+          echo "Signing identity: $IDENTITY"
+          echo "IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
-      - name: Create zip
+      # Hardened runtime (--options runtime) and a secure timestamp are both
+      # mandatory for notarization; a signature missing either is rejected.
+      - name: Sign
+        run: |
+          if [ "$HAS_DEV_ID" = "true" ]; then
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" build/KubeView.app
+          else
+            echo "::warning::No Developer ID secrets — falling back to ad-hoc signing (not notarized)"
+            codesign --force --deep --sign - build/KubeView.app
+          fi
+          codesign --verify --strict --verbose=2 build/KubeView.app
+
+      - name: Package
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent KubeView.app \
+            "KubeView-${{ steps.ver.outputs.tag }}.zip"
+
+      # Staples the ticket onto the .app, so the zip has to be rebuilt
+      # afterwards — and the checksum taken after that, not before.
+      - name: Notarize and staple
+        if: env.HAS_DEV_ID == 'true'
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          cd build
+          ZIP="KubeView-${{ steps.ver.outputs.tag }}.zip"
+          xcrun notarytool submit "$ZIP" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --wait --timeout 30m
+          xcrun stapler staple KubeView.app
+          xcrun stapler validate KubeView.app
+          rm -f "$ZIP"
+          ditto -c -k --sequesterRsrc --keepParent KubeView.app "$ZIP"
+
+      - name: Checksum
         id: zip
         run: |
           cd build
           ZIP="KubeView-${{ steps.ver.outputs.tag }}.zip"
-          ditto -c -k --sequesterRsrc --keepParent KubeView.app "$ZIP"
           SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
@@ -96,16 +166,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.ver.outputs.tag }}" \
-            "build/${{ steps.zip.outputs.zip }}" \
-            --title "KubeView ${{ steps.ver.outputs.tag }}" \
-            --notes "SHA256: \`${{ steps.zip.outputs.sha256 }}\`
+          if [ "$HAS_DEV_ID" = "true" ]; then
+            INSTALL="brew install --cask kubeview"
+            NOTE="Signed with a Developer ID certificate and notarized by Apple."
+          else
+            INSTALL="brew install --cask kubeview --no-quarantine"
+            NOTE="Ad-hoc signed, not notarized — \`--no-quarantine\` is required."
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          SHA256: \`${{ steps.zip.outputs.sha256 }}\`
 
           Install via tap:
           \`\`\`
           brew tap omaksi/kubeview
-          brew install --cask kubeview --no-quarantine
-          \`\`\`"
+          $INSTALL
+          \`\`\`
+
+          $NOTE
+          NOTES
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "build/${{ steps.zip.outputs.zip }}" \
+            --title "KubeView ${{ steps.ver.outputs.tag }}" \
+            --notes-file "$RUNNER_TEMP/notes.md"
 
       - name: Update Homebrew tap
         if: env.HAS_TAP_TOKEN == 'true'

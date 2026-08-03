@@ -151,11 +151,14 @@ The `release.yml` workflow on `macos-14`:
 
 1. Builds universal binary (`arm64` + `x86_64`, merged via `lipo`).
 2. Wraps into `KubeView.app` with `Info.plist` (version from tag).
-3. **Ad-hoc signs** — `codesign --sign -`. Not notarized. Users must install
-   via `brew --no-quarantine` or right-click → Open first time.
+3. **Signs** — Developer ID when `DEV_ID_CERT_P12` is set, ad-hoc otherwise
+   (with a `::warning::`). See "Signing and notarization" below.
 4. Zips as `KubeView-vX.Y.Z.zip` via `ditto -c -k --sequesterRsrc --keepParent`.
-5. Creates GitHub Release with SHA256 in the notes.
-6. Clones `omaksi/homebrew-kubeview`, rewrites `Casks/kubeview.rb` with new
+5. **Notarizes + staples** when signed with a Developer ID, then rebuilds the
+   zip so it carries the ticket.
+6. Checksums the final zip and creates a GitHub Release; the install snippet in
+   the notes includes `--no-quarantine` only on unnotarized builds.
+7. Clones `omaksi/homebrew-kubeview`, rewrites `Casks/kubeview.rb` with new
    version + SHA, commits and pushes. Requires `TAP_TOKEN` secret (PAT with
    `repo` scope on the tap repo).
 
@@ -170,15 +173,42 @@ The `release.yml` workflow on `macos-14`:
   the next patch (`v0.1.1`) instead — preserves history and avoids surprising
   anyone who already saw the failed release.
 
-### Upgrading to notarization
+### Signing and notarization
 
-When an Apple Developer account is available:
+The workflow does both when these five secrets exist; with `DEV_ID_CERT_P12`
+absent it silently degrades to ad-hoc signing, so the release still ships.
 
-- Add secrets: `DEV_ID_CERT_P12` (base64), `DEV_ID_CERT_PASSWORD`,
-  `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, `NOTARY_PASSWORD` (app-specific).
-- Replace `codesign --sign -` with `codesign --deep --options runtime --sign "Developer ID Application: <Name>"`.
-- After zipping: `xcrun notarytool submit ... --wait` → `xcrun stapler staple KubeView.app` → rezip.
-- Drop `--no-quarantine` from README and the tap's install instructions.
+| Secret | What |
+|---|---|
+| `DEV_ID_CERT_P12` | Developer ID Application cert + key, exported as `.p12`, base64'd |
+| `DEV_ID_CERT_PASSWORD` | Password set during the `.p12` export |
+| `NOTARY_APPLE_ID` | Apple Account email on the developer team |
+| `NOTARY_TEAM_ID` | 10-char team ID (top-right of the developer portal) |
+| `NOTARY_PASSWORD` | App-specific password from account.apple.com — *not* the account password |
+
+Export the cert once it's in the login keychain:
+
+```sh
+security find-identity -v -p codesigning          # confirm it's there
+# Keychain Access → right-click the cert → Export → .p12
+base64 -i DeveloperID.p12 | pbcopy                # paste into the GH secret
+```
+
+Notes on the pipeline:
+
+- **Signing order matters.** Sign → zip → notarize → staple → **re-zip** →
+  checksum. Stapling mutates the `.app`, so a checksum taken before it is wrong
+  and the cask would fail verification.
+- **`--options runtime` and `--timestamp` are mandatory.** Notarization rejects
+  a signature missing either. Ad-hoc signing can't use hardened runtime.
+- **The identity string is read back** from the imported keychain rather than
+  hardcoded — it embeds the team ID and has to match the cert exactly.
+- **`--deep` is only for the ad-hoc path.** Apple deprecated it for real
+  signing; this bundle has no nested code, so plain `codesign` is correct.
+- Notarization takes ~2-15 min. `--wait --timeout 30m` blocks the job; on
+  rejection, `xcrun notarytool log <submission-id>` explains why.
+- Once a notarized build ships, drop `--no-quarantine` from README (the release
+  notes already switch automatically).
 
 ### Homebrew tap (separate repo)
 
