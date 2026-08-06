@@ -48,6 +48,14 @@ final class ClusterManager: ObservableObject {
         } else {
             selected = activeOrder.first
         }
+
+        // Record whatever we settled on, including the very first run. Without
+        // this, `activate(persist: false)` above means the active set is only
+        // ever written when the user adds or removes a cluster by hand — so an
+        // untouched install re-derives from `kubectl config current-context` at
+        // every launch and silently follows the terminal around, which defeats
+        // the point of not mutating the kubeconfig in the first place.
+        persistActive()
     }
 
     func activate(_ ctx: String, persist: Bool = true) {
