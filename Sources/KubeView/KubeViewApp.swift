@@ -8,6 +8,7 @@ struct KubeViewApp: App {
     @StateObject private var stars = StarStore()
     @StateObject private var nav = NavState()
     @StateObject private var logs = LogStore.shared
+    @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
 
     var body: some Scene {
         WindowGroup("KubeView", id: "main") {
@@ -19,14 +20,23 @@ struct KubeViewApp: App {
                 .environmentObject(nav)
                 .environmentObject(logs)
                 .frame(minWidth: 900, minHeight: 560)
+                .preferredColorScheme(appearance.colorScheme)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+
+        Settings {
+            SettingsView()
+                .preferredColorScheme(appearance.colorScheme)
+        }
 
         MenuBarExtra {
             MenuBarContent()
                 .environmentObject(manager)
                 .environmentObject(emojis)
+                // The menu bar panel is its own window — it does not inherit the
+                // WindowGroup's scheme, so it has to be set here too.
+                .preferredColorScheme(appearance.colorScheme)
         } label: {
             Image(systemName: menuIcon)
         }
