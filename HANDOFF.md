@@ -74,4 +74,13 @@ Roughly in value order.
 
 - Where will the LGTM stack actually live — this K3s cluster, or somewhere else? Affects whether `--prom-url` defaults are useful.
 - Is there (or will there be) a **separate meta-monitoring** Prometheus? Querying the Mimir being managed means the tool goes blind exactly when it is needed.
-- Repo is `git init`'d but **has no commits yet**, and no GitHub remote. Not added to the parent `GitHub/CLAUDE.md` repo list either.
+- Not added to the parent `GitHub/CLAUDE.md` repo list yet.
+- **Does `TAP_TOKEN` in `omaksi/kubeview` have write access to `omaksi/homebrew-tap`?** The release workflow now pushes there instead of `homebrew-kubeview`. If that secret is a fine-grained PAT scoped to the old repo, the next KubeView release will 403 on the tap-update step. Cannot be checked without releasing or inspecting the token.
+
+## Released
+
+- **v0.1.0**, 2026-08-04 — https://github.com/omaksi/kubectl-lgtm (public, MIT)
+- `brew install omaksi/tap/kubectl-lgtm` — builds from source, `depends_on "go" => :build`, ~22s
+- Formula lives in https://github.com/omaksi/homebrew-tap alongside the KubeView cask
+
+Releasing a new version means: tag, `gh release create`, then bump `url`/`sha256` in `Formula/kubectl-lgtm.rb` in the tap. There is no CI for this yet — `shasum -a 256` the GitHub source tarball by hand. Worth automating (GoReleaser, or a small workflow like KubeView's) once versions start moving.
