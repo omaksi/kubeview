@@ -168,6 +168,11 @@ struct ContentView: View {
                         }
                     }
                     .toolbar {
+                        // Same placement renders in declaration order, so this
+                        // sits to the left of Refresh.
+                        ToolbarItem(placement: .primaryAction) {
+                            AppearanceToggle()
+                        }
                         ToolbarItem(placement: .primaryAction) {
                             Button {
                                 Task { await store.refresh() }

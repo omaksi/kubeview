@@ -23,6 +23,26 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// One-click light/dark for the toolbar. Reads the *effective* scheme rather
+/// than the stored mode, so from `.system` it flips to whichever is the opposite
+/// of what you're currently looking at — which is what a single button should do.
+/// The three-way choice, including returning to System, stays in Settings.
+struct AppearanceToggle: View {
+    @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
+    @Environment(\.colorScheme) private var scheme
+
+    private var isDark: Bool { scheme == .dark }
+
+    var body: some View {
+        Button {
+            appearance = isDark ? .light : .dark
+        } label: {
+            Image(systemName: isDark ? "sun.max" : "moon")
+        }
+        .help(isDark ? "Switch to light appearance" : "Switch to dark appearance")
+    }
+}
+
 struct SettingsView: View {
     @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
     @State private var token = ""
