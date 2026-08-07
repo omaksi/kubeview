@@ -25,6 +25,8 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
+    @State private var token = ""
+    @State private var tokenSaved = false
 
     var body: some View {
         Form {
@@ -38,10 +40,49 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                SecureField("GitHub token", text: $token)
+                HStack {
+                    Button("Save") {
+                        Keychain.set(token.trimmingCharacters(in: .whitespacesAndNewlines),
+                                     account: Keychain.githubTokenAccount)
+                        tokenSaved = true
+                    }
+                    .controlSize(.small)
+                    .disabled(token.isEmpty)
+                    Button("Remove") {
+                        Keychain.delete(Keychain.githubTokenAccount)
+                        token = ""
+                        tokenSaved = false
+                    }
+                    .controlSize(.small)
+                    Spacer()
+                    if tokenSaved {
+                        Label("Stored in Keychain", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+            } header: {
+                Text("Feedback")
+            } footer: {
+                Text("Needed to open issues from Report Feedback. Use a fine-grained token "
+                     + "scoped to omaksi/kubeview with Issues: write, or a classic token with "
+                     + "public_repo. Stored in your Keychain, never in preferences. Without one, "
+                     + "Report Feedback still lets you copy the payload and paste it yourself.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 380)
+        .frame(width: 460)
         .fixedSize()
+        .onAppear {
+            // Show that a token exists without ever displaying it.
+            tokenSaved = Keychain.get(Keychain.githubTokenAccount)?.isEmpty == false
+            if tokenSaved { token = "" }
+        }
     }
 }
 

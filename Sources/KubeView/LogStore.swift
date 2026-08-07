@@ -88,7 +88,23 @@ extension LogStore {
             guard redacted else { return s }
             var out = s
             for (real, alias) in aliases where !real.isEmpty {
-                out = out.replacingOccurrences(of: real, with: alias)
+                // Word-bounded: a context named `default` would otherwise rewrite
+                // every occurrence of the substring, turning kubectl's "defaulted
+                // container" into "cluster-2ed container".
+                let escaped = NSRegularExpression.escapedPattern(for: real)
+                out = out.replacingOccurrences(of: "\\b\(escaped)\\b", with: alias,
+                                               options: .regularExpression)
+            }
+            // Resource identifiers only ever reach the log via kubectl argv, so
+            // mask them there. Command shape and timings — the parts worth
+            // reading — survive intact.
+            for (pattern, template) in [
+                (#"(-n|--namespace)\s+\S+"#, "$1 <ns>"),
+                (#"(describe\s+\S+\s+)\S+"#, "$1<name>"),
+                (#"(logs\s+)(?!-)\S+"#, "$1<pod>"),
+            ] {
+                out = out.replacingOccurrences(of: pattern, with: template,
+                                               options: .regularExpression)
             }
             for pattern in [
                 #"https?://[^\s"']+"#,

@@ -10,6 +10,7 @@ struct DiagnosticsView: View {
     @State private var follow = true
     @State private var redact = true
     @State private var copied = false
+    @State private var showingFeedback = false
 
     private var filtered: [LogEntry] {
         logs.entries.filter { e in
@@ -32,6 +33,11 @@ struct DiagnosticsView: View {
             }
             Divider()
             footer
+        }
+        .sheet(isPresented: $showingFeedback) {
+            FeedbackSheet()
+                .environmentObject(logs)
+                .environmentObject(manager)
         }
     }
 
@@ -106,7 +112,7 @@ struct DiagnosticsView: View {
                 .controlSize(.small)
             Button("Save Report…") { saveReport() }
                 .controlSize(.small)
-            Button("Report Issue…") { reportIssue() }
+            Button("Report Feedback…") { showingFeedback = true }
                 .controlSize(.small)
         }
         .padding(8)
@@ -139,15 +145,6 @@ struct DiagnosticsView: View {
         try? makeReport().write(to: url, atomically: true, encoding: .utf8)
     }
 
-    /// Copies rather than stuffing the body into the URL — reports routinely
-    /// exceed what a GitHub issue URL will carry, and a silently truncated
-    /// report is worse than none.
-    private func reportIssue() {
-        copyReport()
-        if let url = URL(string: "https://github.com/omaksi/kubeview/issues/new") {
-            NSWorkspace.shared.open(url)
-        }
-    }
 }
 
 private struct LogRow: View {
