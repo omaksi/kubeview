@@ -7,7 +7,7 @@ Instructions for Claude Code when working in this repo.
 Native macOS desktop app for viewing Kubernetes clusters. SwiftUI, SPM executable,
 macOS 14+. Shells out to `kubectl` (no native k8s client) — intentional for MVP.
 
-## Featureset (as of v0.2.0)
+## Featureset (as of v0.3.0)
 
 | Category | Resources |
 |---|---|
@@ -211,7 +211,7 @@ The `release.yml` workflow on `macos-14`:
    zip so it carries the ticket.
 6. Checksums the final zip and creates a GitHub Release; the install snippet in
    the notes includes `--no-quarantine` only on unnotarized builds.
-7. Clones `omaksi/homebrew-kubeview`, rewrites `Casks/kubeview.rb` with new
+7. Clones `omaksi/homebrew-tap`, rewrites `Casks/kubeview.rb` with new
    version + SHA, commits and pushes. Requires `TAP_TOKEN` secret (PAT with
    `repo` scope on the tap repo).
 
@@ -267,12 +267,12 @@ Notes on the pipeline:
 
 ### Homebrew tap (separate repo)
 
-`omaksi/homebrew-kubeview` lives at `~/Documents/GitHub/homebrew-kubeview/`.
+`omaksi/homebrew-tap` (the tap repo, renamed from `homebrew-kubeview`).
 Users install with:
 
 ```sh
-brew tap omaksi/kubeview
-brew trust omaksi/kubeview
+brew tap omaksi/tap
+brew trust omaksi/tap
 brew install --cask kubeview
 ```
 

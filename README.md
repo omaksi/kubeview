@@ -9,8 +9,8 @@ Native macOS desktop app for viewing Kubernetes clusters across multiple context
 ### Homebrew tap (recommended)
 
 ```sh
-brew tap omaksi/kubeview
-brew trust omaksi/kubeview
+brew tap omaksi/tap
+brew trust omaksi/tap
 brew install --cask kubeview
 open -a KubeView
 ```
@@ -46,7 +46,7 @@ stapled to the app, so it launches normally with no right-click workaround.
 
 ```sh
 brew uninstall --cask kubeview
-brew untap omaksi/kubeview
+brew untap omaksi/tap
 ```
 
 ## Usage
