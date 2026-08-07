@@ -167,7 +167,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$HAS_DEV_ID" = "true" ]; then
-            INSTALL="brew trust omaksi/kubeview
+            INSTALL="brew trust omaksi/tap
           brew install --cask kubeview"
             NOTE="Signed with a Developer ID certificate and notarized by Apple."
           else
@@ -179,7 +179,7 @@ jobs:
 
           Install via tap:
           \`\`\`
-          brew tap omaksi/kubeview
+          brew tap omaksi/tap
           $INSTALL
           \`\`\`
 
@@ -200,7 +200,7 @@ jobs:
           SHA="${{ steps.zip.outputs.sha256 }}"
           URL="https://github.com/omaksi/kubeview/releases/download/${TAG}/${{ steps.zip.outputs.zip }}"
 
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/omaksi/homebrew-kubeview.git" tap
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/omaksi/homebrew-tap.git" tap
           cd tap
           mkdir -p Casks
           cat > Casks/kubeview.rb <<RUBY
@@ -214,7 +214,7 @@ jobs:
             homepage "https://github.com/omaksi/kubeview"
 
             depends_on formula: "kubernetes-cli"
-            depends_on macos: ">= :sonoma"
+            depends_on macos: :sonoma
 
             app "KubeView.app"
 
