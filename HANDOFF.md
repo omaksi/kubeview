@@ -12,8 +12,13 @@
 | `go test ./...` (Tools/kubectl-lgtm) | 6 packages ok |
 | `./scripts/check-sources.sh` | OK |
 
-`origin` is untouched. Every commit below is local only. The Go repo at
-`~/GitHub/kubectl-lgtm` also has two unpushed commits.
+`origin` is untouched: **29 commits unpushed here** (18 authored in this work, the
+rest arriving with the subtree merge that carries the Go repo history), and **7
+unpushed** in `~/GitHub/kubectl-lgtm`. Both are clean fast-forwards.
+
+**Pushing needs credentials this machine does not have** - no `gh`, no GitHub SSH
+key, nothing in the keychain for github.com, and a global `insteadOf` rewrite
+forcing HTTPS. Ondrej has to authenticate once.
 
 **The design lives here:** https://claude.ai/code/artifact/4f483667-6f3e-4359-a06e-a769ede5e7e8
 
@@ -57,8 +62,8 @@ all; LgtmViewKit has no live reference to a KubeViewKit type.
 
 ## What is left
 
-1. **Push.** Fifteen commits here, two in `~/GitHub/kubectl-lgtm`. Needs Ondrej's
-   explicit go-ahead - that rule has not changed.
+1. **Push.** 29 commits here, 7 in `~/GitHub/kubectl-lgtm`. Blocked on GitHub
+   credentials, not on permission - Ondrej has authorised the push.
 2. **Release `kubectl-lgtm` with `--json`.** Its published `v0.1.0` (Aug 7)
    predates the flag. The new `lgtm-view` cask declares
    `depends_on formula: "omaksi/tap/kubectl-lgtm"`, so **the app is unusable from
