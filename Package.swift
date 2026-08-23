@@ -5,7 +5,8 @@ let package = Package(
     name: "KubeView",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "KubeView", targets: ["KubeView"])
+        .executable(name: "KubeView", targets: ["KubeView"]),
+        .executable(name: "LgtmView", targets: ["LgtmView"])
     ],
     targets: [
         // Layer 1 - pure. Foundation only. No I/O, no SwiftUI.
@@ -22,8 +23,9 @@ let package = Package(
         .target(name: "KubeViewKit", dependencies: ["KubeModel", "KubeClient", "KubeUI"]),
         .executableTarget(name: "KubeView", dependencies: ["KubeViewKit"]),
 
-        // The LGTM stack inspector. Library only for now - its @main shell,
-        // its own store and its pod-inspect sheet land in the next phase.
-        .target(name: "LgtmViewKit", dependencies: ["KubeModel", "KubeClient", "KubeUI"])
+        // The LGTM stack inspector. Same shape as KubeView: logic in the kit
+        // so tests can import it, a ~6 line @main shell for the executable.
+        .target(name: "LgtmViewKit", dependencies: ["KubeModel", "KubeClient", "KubeUI"]),
+        .executableTarget(name: "LgtmView", dependencies: ["LgtmViewKit"])
     ]
 )
