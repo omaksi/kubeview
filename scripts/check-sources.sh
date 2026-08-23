@@ -15,7 +15,9 @@ cd "$ROOT"
 DESCRIBE="$(swift package describe --type json)"
 
 CLAIMED="$(jq -r '.targets[] as $t | $t.sources[] | "\($t.path)/\(.)"' <<<"$DESCRIBE" | sort)"
-ON_DISK="$(find Sources -name '*.swift' | sort)"
+# Tests/ counts too: a misplaced test file, or a directory whose name does not
+# match its target, is dropped just as silently as one under Sources/.
+ON_DISK="$(find Sources Tests -name '*.swift' 2>/dev/null | sort)"
 
 ORPHANS="$(comm -13 <(printf '%s\n' "$CLAIMED") <(printf '%s\n' "$ON_DISK"))"
 
@@ -25,4 +27,4 @@ if [ -n "$ORPHANS" ]; then
   exit 1
 fi
 
-echo "OK: every .swift file under Sources/ is covered by a declared target."
+echo "OK: every .swift file under Sources/ and Tests/ is covered by a declared target."
