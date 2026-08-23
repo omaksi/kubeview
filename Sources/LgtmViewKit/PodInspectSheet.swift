@@ -3,7 +3,7 @@ import KubeModel
 import KubeUI
 
 /// The LGTM app's replacement for reaching into the main app's Pod screens.
-/// Today that happened two ways, and both assumed a second screen inside the
+/// That used to happen two ways, and both assumed a second screen inside the
 /// SAME process: `showPods()` wrote `SearchState`/`NavState`/`TabStore`/
 /// `ClusterStore` directly, and the pod cards in `LgtmClusterView.swift`
 /// pushed `AppRoute.pod(PodRoute(...))` onto a `NavigationStack` that

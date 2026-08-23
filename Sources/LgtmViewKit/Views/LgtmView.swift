@@ -353,9 +353,10 @@ struct LgtmRootView: View {
             Label("kubectl-lgtm not found", systemImage: "chart.line.downtrend.xyaxis")
         } description: {
             VStack(spacing: 8) {
-                Text("The stack analysis runs in a helper binary that ships inside this app. This build does not have it.")
-                Text("Rebuild with scripts/bundle.sh, or install it alongside.")
-                    .font(.caption)
+                Text("The stack analysis runs in the kubectl-lgtm helper, which installs separately.")
+                Text(verbatim: "brew install omaksi/tap/kubectl-lgtm")
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
             }
         }
     }

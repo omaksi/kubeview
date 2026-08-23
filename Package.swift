@@ -26,6 +26,13 @@ let package = Package(
         // The LGTM stack inspector. Same shape as KubeView: logic in the kit
         // so tests can import it, a ~6 line @main shell for the executable.
         .target(name: "LgtmViewKit", dependencies: ["KubeModel", "KubeClient", "KubeUI"]),
-        .executableTarget(name: "LgtmView", dependencies: ["LgtmViewKit"])
+        .executableTarget(name: "LgtmView", dependencies: ["LgtmViewKit"]),
+
+        // Test targets. No KubeUITests: it's SwiftUI views with no standalone
+        // pure logic worth pinning (see CLAUDE.md).
+        .testTarget(name: "KubeModelTests", dependencies: ["KubeModel"]),
+        .testTarget(name: "KubeClientTests", dependencies: ["KubeClient"]),
+        .testTarget(name: "KubeViewKitTests", dependencies: ["KubeViewKit", "KubeModel"]),
+        .testTarget(name: "LgtmViewKitTests", dependencies: ["LgtmViewKit"])
     ]
 )

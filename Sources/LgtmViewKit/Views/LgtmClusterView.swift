@@ -5,10 +5,11 @@ import KubeClient
 import KubeUI
 
 /// The "what is true right now" face of the LGTM tab. Built entirely from
-/// `ClusterStore`, which already polls every 5s — this view adds zero
-/// subprocess calls of its own, so it paints immediately and keeps working
-/// when Mimir (the thing the Metrics/Findings tabs depend on) is exactly the
-/// thing that's broken. `report` supplies classification only (which
+/// `LgtmClusterStore`, refreshed alongside the analyser report by
+/// `LgtmStore.load()` — this view adds zero subprocess calls of its own, so
+/// it paints immediately and keeps working when Mimir (the thing the
+/// Metrics/Findings tabs depend on) is exactly the thing that's broken.
+/// `report` supplies classification only (which
 /// workload is which product/role); every number here is live Kubernetes
 /// state, not the report's own (possibly minutes-stale) snapshot.
 ///
@@ -48,9 +49,10 @@ struct LgtmClusterView: View {
     private static let highRestartThreshold = 5
 
     /// Names the LGTM Helm charts give their workloads, used only when `report`
-    /// hasn't landed yet. Duplicated from `ContentView.isLgtm` rather than
-    /// shared — that function is `private` in a file this view isn't allowed
-    /// to touch (lane fence).
+    /// hasn't landed yet. Not shared with anything now - `ContentView.isLgtm`
+    /// (the one other place this exact name list lived) was deleted along
+    /// with the rest of KubeView's LGTM tab when this app split off, so there
+    /// is nothing left to share it with.
     private static let knownProducts = ["mimir", "loki", "tempo", "grafana", "alloy", "pyroscope"]
 
     var body: some View {
@@ -186,7 +188,7 @@ struct LgtmClusterView: View {
         }
 
         // No classification yet: group directly off workload names already in
-        // ClusterStore. ponytail: the "role" shown here is just the workload's
+        // LgtmClusterStore. ponytail: the "role" shown here is just the workload's
         // full name (we have no real ingester/distributor/... label without
         // kubectl-lgtm) - it's replaced automatically the moment `report` lands.
         var rows: [LgtmClusterComponentRow] = []
@@ -474,7 +476,7 @@ private struct LgtmClusterNodePlacement: Identifiable {
     var id: String { node }
 }
 
-// MARK: - Pure join / health logic (kept free of SwiftUI + ClusterStore so `selfCheck` can exercise it directly)
+// MARK: - Pure join / health logic (kept free of SwiftUI + LgtmClusterStore so `selfCheck` can exercise it directly)
 
 enum LgtmClusterJoin {
     /// True if `pod` belongs to `component`. Namespace is checked first - a
@@ -732,13 +734,14 @@ private struct LgtmClusterComponentCard: View {
 }
 
 /// The pod card body shown for every pod in a component - always, never
-/// behind a disclosure. `PodCardBody` (NamespaceDetailView.swift, out of
-/// lane) plus live CPU/Mem against the *component's* ceiling. This is the
+/// behind a disclosure. `PodCardBody` (`NamespaceDetailView.swift`,
+/// `KubeViewKit` - a module this app cannot depend on) plus a live CPU/Mem
+/// bar against the *component's* ceiling, which it lacks. This is the
 /// number a component-level average would hide: three ingesters at
 /// 40/45/95% average to a comfortable-looking 60%, and per-pod is the only
 /// place the 95% one is visible - metrics history in LgtmMetricsView is
 /// aggregated per component by the Go analyser, never per-pod, so live
-/// metrics-server data (already in ClusterStore) is the only source for this.
+/// metrics-server data (already in `LgtmClusterStore`) is the only source for this.
 private struct LgtmPodUsageCardBody: View {
     let pod: Pod
     /// nil when metrics-server has no reading for this pod yet (just started)
@@ -795,11 +798,11 @@ private struct LgtmPodUsageCardBody: View {
 }
 
 /// A usage-vs-ceiling bar for this tab only - deliberately not `UsageBar`
-/// (OverviewView.swift, out of lane and shared app-wide): that component
-/// grades its fill red/orange/green past fixed percentage thresholds, which
-/// is exactly the interpretation this tab must not make (Cluster/Metrics show
-/// what IS; only Findings judges it). One neutral colour - the printed
-/// percentage is the fact, not the colour.
+/// (`OverviewView.swift`, `KubeViewKit` - a module this app cannot depend on,
+/// and shared app-wide there): that component grades its fill red/orange/green
+/// past fixed percentage thresholds, which is exactly the interpretation this
+/// tab must not make (Cluster/Metrics show what IS; only Findings judges it).
+/// One neutral colour - the printed percentage is the fact, not the colour.
 private struct LgtmFactBar: View {
     let label: String
     let used: Double

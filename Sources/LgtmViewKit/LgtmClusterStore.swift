@@ -13,17 +13,18 @@ import KubeClient
 ///
 /// The five kinds below are exactly what the audit of
 /// `Views/LgtmClusterView.swift` found reachable from `ClusterStore` - see:
-///   - `store.pods`            LgtmClusterView.swift:128, :172, :184, :196
-///   - `store.deployments`     LgtmClusterView.swift:123, :170
-///   - `store.statefulSets`    LgtmClusterView.swift:124, :182
-///   - `store.daemonSets`      LgtmClusterView.swift:125, :194
-///   - `store.podMetrics`      LgtmClusterView.swift:92 (joined by "ns/name")
-///   - `store.metricsAvailable` LgtmClusterView.swift:250, :358
-/// `store.isFirstLoad` (LgtmClusterView.swift:43) is mirrored below as a
+///   - `store.pods`            LgtmClusterView.swift:164, :208, :220, :232
+///   - `store.deployments`     LgtmClusterView.swift:159, :206
+///   - `store.statefulSets`    LgtmClusterView.swift:160, :218
+///   - `store.daemonSets`      LgtmClusterView.swift:161, :230
+///   - `store.podMetrics`      LgtmClusterView.swift:128 (joined by "ns/name")
+///   - `store.metricsAvailable` LgtmClusterView.swift:286, :397
+/// `store.isFirstLoad` (LgtmClusterView.swift:58) is mirrored below as a
 /// computed property so that call site needs no change. Nothing else in the
-/// five Lgtm* view files reads `ClusterStore` - see the audit for the rest
-/// (`SearchState`/`NavState`/`TabStore`, all confined to `showPods()`, which
-/// this app replaces rather than ports).
+/// five Lgtm* view files reads `ClusterStore` - the only other stores the
+/// original code touched (`SearchState`/`NavState`/`TabStore`) were all
+/// confined to `showPods()`, which this app replaced with `LgtmStore.tab` /
+/// `scrollToComponentTitle` (see `LgtmView.swift`) rather than porting them.
 @MainActor
 final class LgtmClusterStore: ObservableObject {
     let context: String
@@ -62,10 +63,11 @@ final class LgtmClusterStore: ObservableObject {
     /// the common case.
     ///
     /// Pods fail hard - this tab has nothing to show without them, same as
-    /// `ClusterStore.pods` (ClusterStore.swift:384). Deployments/StatefulSets/
-    /// DaemonSets/pod metrics fail soft exactly like `ClusterStore` does for
-    /// those same four kinds (ClusterStore.swift:393-408), so a cluster
-    /// missing one workload type or metrics-server doesn't blank the tab.
+    /// `ClusterStore.pods` in `ClusterStore.refresh()` (`KubeViewKit`).
+    /// Deployments/StatefulSets/DaemonSets/pod metrics fail soft exactly like
+    /// `ClusterStore` does for those same four kinds in the same method, so a
+    /// cluster missing one workload type or metrics-server doesn't blank the
+    /// tab.
     func load() async {
         guard !loading else { return }
         loading = true
