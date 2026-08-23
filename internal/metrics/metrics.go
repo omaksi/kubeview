@@ -17,6 +17,24 @@ type Sample struct {
 	Value float64
 }
 
+// PodUsage is one replica's own measurements over the window.
+//
+// The aggregate fields on Usage are derived from these, not the other way
+// round: a workload's replicas are not interchangeable, and collapsing them to
+// a single number hides the failure mode people actually open this tool to
+// find - three replicas where one carries the load and two idle. The collapse
+// is a judgement about sizing, so it belongs to the rules; the per-replica
+// numbers are measurements, so they are reported as measured.
+type PodUsage struct {
+	Pod           string
+	MemP99Bytes   float64
+	MemMaxBytes   float64
+	CPUP99Millis  float64
+	ThrottleRatio float64
+	OOMContainers float64
+	Restarts      float64
+}
+
 // Usage is the historical picture of one component over the lookback window.
 type Usage struct {
 	MemP99Bytes   float64
@@ -36,6 +54,10 @@ type Usage struct {
 	Coverage time.Duration
 
 	Queries []Sample
+
+	// Pods carries each replica's own numbers. The aggregate fields above are
+	// the max across these - see PodUsage for why both exist.
+	Pods []PodUsage
 }
 
 // Target identifies the pods to query for one workload.
