@@ -15,6 +15,20 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    strategy:
+      # fail-fast: false so a notarization hiccup on one app doesn't cancel
+      # the other mid-flight - they're independent artifacts of one tag.
+      fail-fast: false
+      matrix:
+        include:
+          - app_name: KubeView
+            product: KubeView
+            bundle_id: com.omaksi.kubeview
+            cask: kubeview
+          - app_name: LgtmView
+            product: LgtmView
+            bundle_id: com.omaksi.lgtmview
+            cask: lgtm-view
     env:
       HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }}
       HAS_DEV_ID: ${{ secrets.DEV_ID_CERT_P12 != '' && 'true' || 'false' }}
@@ -37,13 +51,13 @@ jobs:
 
       - name: Build universal binary
         run: |
-          swift build -c release --arch arm64
-          swift build -c release --arch x86_64
+          swift build -c release --arch arm64 --product "${{ matrix.product }}"
+          swift build -c release --arch x86_64 --product "${{ matrix.product }}"
           mkdir -p build
-          lipo -create -output build/KubeView \
-            .build/arm64-apple-macosx/release/KubeView \
-            .build/x86_64-apple-macosx/release/KubeView
-          lipo -info build/KubeView
+          lipo -create -output "build/${{ matrix.product }}" \
+            ".build/arm64-apple-macosx/release/${{ matrix.product }}" \
+            ".build/x86_64-apple-macosx/release/${{ matrix.product }}"
+          lipo -info "build/${{ matrix.product }}"
 
       - name: Generate app icon
         run: |
@@ -53,16 +67,17 @@ jobs:
       - name: Bundle .app
         run: |
           ./scripts/bundle.sh \
-            --bin build/KubeView \
-            --app-name KubeView \
-            --bundle-id com.omaksi.kubeview \
-            --product KubeView \
+            --bin "build/${{ matrix.product }}" \
+            --app-name "${{ matrix.app_name }}" \
+            --bundle-id "${{ matrix.bundle_id }}" \
+            --product "${{ matrix.product }}" \
             --out build \
             --version "${{ steps.ver.outputs.version }}"
 
       # Imports into a throwaway keychain rather than login.keychain — the
       # runner is ephemeral, but a temp keychain keeps the private key out of
-      # any step that doesn't need it and dies with the job.
+      # any step that doesn't need it and dies with the job. Each matrix leg
+      # is its own VM, so importing per-leg is required, not just tolerated.
       - name: Import Developer ID certificate
         if: env.HAS_DEV_ID == 'true'
         env:
@@ -97,20 +112,21 @@ jobs:
       # mandatory for notarization; a signature missing either is rejected.
       - name: Sign
         run: |
+          APP="build/${{ matrix.app_name }}.app"
           if [ "$HAS_DEV_ID" = "true" ]; then
             codesign --force --options runtime --timestamp \
-              --sign "$IDENTITY" build/KubeView.app
+              --sign "$IDENTITY" "$APP"
           else
             echo "::warning::No Developer ID secrets — falling back to ad-hoc signing (not notarized)"
-            codesign --force --deep --sign - build/KubeView.app
+            codesign --force --deep --sign - "$APP"
           fi
-          codesign --verify --strict --verbose=2 build/KubeView.app
+          codesign --verify --strict --verbose=2 "$APP"
 
       - name: Package
         run: |
           cd build
-          ditto -c -k --sequesterRsrc --keepParent KubeView.app \
-            "KubeView-${{ steps.ver.outputs.tag }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "${{ matrix.app_name }}.app" \
+            "${{ matrix.app_name }}-${{ steps.ver.outputs.tag }}.zip"
 
       # Staples the ticket onto the .app, so the zip has to be rebuilt
       # afterwards — and the checksum taken after that, not before.
@@ -122,54 +138,121 @@ jobs:
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
           cd build
-          ZIP="KubeView-${{ steps.ver.outputs.tag }}.zip"
+          APP="${{ matrix.app_name }}.app"
+          ZIP="${{ matrix.app_name }}-${{ steps.ver.outputs.tag }}.zip"
           xcrun notarytool submit "$ZIP" \
             --apple-id "$NOTARY_APPLE_ID" \
             --team-id "$NOTARY_TEAM_ID" \
             --password "$NOTARY_PASSWORD" \
             --wait --timeout 30m
-          xcrun stapler staple KubeView.app
-          xcrun stapler validate KubeView.app
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
           rm -f "$ZIP"
-          ditto -c -k --sequesterRsrc --keepParent KubeView.app "$ZIP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
       - name: Checksum
         id: zip
         run: |
           cd build
-          ZIP="KubeView-${{ steps.ver.outputs.tag }}.zip"
+          ZIP="${{ matrix.app_name }}-${{ steps.ver.outputs.tag }}.zip"
           SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+          echo -n "$SHA" > "$ZIP.sha256"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-          echo "## SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "## SHA256 (${{ matrix.app_name }})" >> "$GITHUB_STEP_SUMMARY"
           echo "\`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Matrix jobs can't reliably fan their step outputs in to a single
+      # downstream job, so the zip + its checksum travel as an artifact
+      # instead - the release job below downloads both legs' artifacts.
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.app_name }}
+          path: |
+            build/${{ steps.zip.outputs.zip }}
+            build/${{ steps.zip.outputs.zip }}.sha256
+          if-no-files-found: error
+
+  # One tag, one GitHub release carrying both apps' zips, and one Homebrew
+  # tap commit carrying both casks - deliberately serialized here, and only
+  # here. Notarization (the slow part, in `build` above) still runs as two
+  # parallel matrix legs; only the parts that touch a single shared resource
+  # (the release, the tap repo's git history) are sequenced.
+  release:
+    needs: build
+    runs-on: macos-14
+    env:
+      HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }}
+      HAS_DEV_ID: ${{ secrets.DEV_ID_CERT_P12 != '' && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download KubeView artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-KubeView
+          path: artifacts/KubeView
+
+      - name: Download LgtmView artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-LgtmView
+          path: artifacts/LgtmView
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          KUBEVIEW_ZIP="artifacts/KubeView/KubeView-${TAG}.zip"
+          LGTMVIEW_ZIP="artifacts/LgtmView/LgtmView-${TAG}.zip"
+          KUBEVIEW_SHA=$(cat "${KUBEVIEW_ZIP}.sha256")
+          LGTMVIEW_SHA=$(cat "${LGTMVIEW_ZIP}.sha256")
+
           if [ "$HAS_DEV_ID" = "true" ]; then
-            INSTALL="brew trust omaksi/tap
-          brew install --cask kubeview"
+            INSTALL_KUBEVIEW="brew install --cask kubeview"
+            INSTALL_LGTMVIEW="brew install --cask lgtm-view"
             NOTE="Signed with a Developer ID certificate and notarized by Apple."
           else
-            INSTALL="brew install --cask kubeview --no-quarantine"
+            INSTALL_KUBEVIEW="brew install --cask kubeview --no-quarantine"
+            INSTALL_LGTMVIEW="brew install --cask lgtm-view --no-quarantine"
             NOTE="Ad-hoc signed, not notarized — \`--no-quarantine\` is required."
           fi
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
-          SHA256: \`${{ steps.zip.outputs.sha256 }}\`
+          ## KubeView
+          SHA256: \`$KUBEVIEW_SHA\`
 
-          Install via tap:
           \`\`\`
           brew tap omaksi/tap
-          $INSTALL
+          $INSTALL_KUBEVIEW
+          \`\`\`
+
+          ## LgtmView
+          SHA256: \`$LGTMVIEW_SHA\`
+
+          \`\`\`
+          brew tap omaksi/tap
+          $INSTALL_LGTMVIEW
           \`\`\`
 
           $NOTE
           NOTES
-          gh release create "${{ steps.ver.outputs.tag }}" \
-            "build/${{ steps.zip.outputs.zip }}" \
-            --title "KubeView ${{ steps.ver.outputs.tag }}" \
+          gh release create "$TAG" \
+            "$KUBEVIEW_ZIP" \
+            "$LGTMVIEW_ZIP" \
+            --title "KubeView & LgtmView ${TAG}" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
       - name: Update Homebrew tap
@@ -179,18 +262,19 @@ jobs:
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
           TAG="${{ steps.ver.outputs.tag }}"
-          SHA="${{ steps.zip.outputs.sha256 }}"
-          URL="https://github.com/omaksi/kubeview/releases/download/${TAG}/${{ steps.zip.outputs.zip }}"
+          KUBEVIEW_SHA=$(cat "artifacts/KubeView/KubeView-${TAG}.zip.sha256")
+          LGTMVIEW_SHA=$(cat "artifacts/LgtmView/LgtmView-${TAG}.zip.sha256")
 
           git clone "https://x-access-token:${GH_TOKEN}@github.com/omaksi/homebrew-tap.git" tap
           cd tap
           mkdir -p Casks
+
           cat > Casks/kubeview.rb <<RUBY
           cask "kubeview" do
             version "${VERSION}"
-            sha256 "${SHA}"
+            sha256 "${KUBEVIEW_SHA}"
 
-            url "${URL}"
+            url "https://github.com/omaksi/kubeview/releases/download/${TAG}/KubeView-${TAG}.zip"
             name "KubeView"
             desc "Native macOS desktop app for viewing Kubernetes clusters"
             homepage "https://github.com/omaksi/kubeview"
@@ -205,8 +289,31 @@ jobs:
             ]
           end
           RUBY
+
+          cat > Casks/lgtm-view.rb <<RUBY
+          cask "lgtm-view" do
+            version "${VERSION}"
+            sha256 "${LGTMVIEW_SHA}"
+
+            url "https://github.com/omaksi/kubeview/releases/download/${TAG}/LgtmView-${TAG}.zip"
+            name "LgtmView"
+            desc "Native macOS LGTM stack inspector for Kubernetes clusters"
+            homepage "https://github.com/omaksi/kubeview"
+
+            depends_on formula: "kubernetes-cli"
+            depends_on formula: "omaksi/tap/kubectl-lgtm"
+            depends_on macos: :sonoma
+
+            app "LgtmView.app"
+
+            zap trash: [
+              "~/Library/Preferences/com.omaksi.lgtmview.plist",
+            ]
+          end
+          RUBY
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Casks/kubeview.rb
-          git commit -m "kubeview ${VERSION}"
+          git add Casks/kubeview.rb Casks/lgtm-view.rb
+          git commit -m "kubeview ${VERSION}, lgtm-view ${VERSION}"
           git push

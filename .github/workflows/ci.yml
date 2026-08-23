@@ -18,3 +18,24 @@ jobs:
 
       - name: Check for orphaned source files
         run: ./scripts/check-sources.sh
+
+      # swift test lands in the same change that adds test targets - none
+      # exist yet, and `swift test` fails outright with no targets to run.
+
+  go:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: Tools/kubectl-lgtm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Tools/kubectl-lgtm/go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
