@@ -147,6 +147,50 @@ func fixturesFor(topology string) []fixture {
 	return largeFixtures
 }
 
+// podFixtures gives a hand-picked few components genuinely divergent replica
+// measurements, keyed by component name rather than added as a field on
+// fixture — every existing fixture literal above is positional, so a new
+// trailing field would force a value onto all of them for no reason: most
+// components have nothing interesting to say per-pod, and an unlisted name
+// here correctly falls through to a nil slice.
+//
+// The top-level scalars on each fixture above are unchanged and must stay
+// the max (memory, CPU) or sum (restarts, OOM kills) across these — the same
+// collapse the real provider performs, see internal/scaling invariant 7 —
+// so a rule that already fires on the aggregate keeps firing on exactly the
+// same number. Only the throttle ratio has no such relationship: it is its
+// own pooled query on the real provider, not derived from per-pod values.
+//
+// Three shapes, because a fixture where every pod looks alike demos the
+// per-pod feature into invisibility:
+var podFixtures = map[string][]metrics.PodUsage{
+	// ~4x spread: one replica carrying nearly all the load, five idling.
+	// Busiest pod's numbers equal the mimir-querier aggregate above exactly.
+	"mimir-querier": {
+		{Pod: "mimir-querier-7d9f6c8b5-abcde", MemP99Bytes: 3.6 * Gi, MemMaxBytes: 4.1 * Gi, CPUP99Millis: 1380, ThrottleRatio: 0.31, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-querier-7d9f6c8b5-fghij", MemP99Bytes: 0.95 * Gi, MemMaxBytes: 1.05 * Gi, CPUP99Millis: 340, ThrottleRatio: 0.06, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-querier-7d9f6c8b5-klmno", MemP99Bytes: 0.90 * Gi, MemMaxBytes: 1.00 * Gi, CPUP99Millis: 310, ThrottleRatio: 0.05, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-querier-7d9f6c8b5-pqrst", MemP99Bytes: 0.88 * Gi, MemMaxBytes: 0.98 * Gi, CPUP99Millis: 300, ThrottleRatio: 0.05, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-querier-7d9f6c8b5-uvwxy", MemP99Bytes: 0.85 * Gi, MemMaxBytes: 0.95 * Gi, CPUP99Millis: 290, ThrottleRatio: 0.04, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-querier-7d9f6c8b5-zabcd", MemP99Bytes: 0.80 * Gi, MemMaxBytes: 0.90 * Gi, CPUP99Millis: 270, ThrottleRatio: 0.04, OOMContainers: 0, Restarts: 0},
+	},
+	// ~2x spread, and the OOM/restart history the aggregate already carries
+	// (2 OOMed containers, 7 restarts) lands entirely on the busy replica.
+	"mimir-store-gateway": {
+		{Pod: "mimir-store-gateway-0", MemP99Bytes: 7.4 * Gi, MemMaxBytes: 7.9 * Gi, CPUP99Millis: 940, ThrottleRatio: 0.08, OOMContainers: 2, Restarts: 5},
+		{Pod: "mimir-store-gateway-1", MemP99Bytes: 3.8 * Gi, MemMaxBytes: 4.0 * Gi, CPUP99Millis: 480, ThrottleRatio: 0.03, OOMContainers: 0, Restarts: 1},
+		{Pod: "mimir-store-gateway-2", MemP99Bytes: 3.5 * Gi, MemMaxBytes: 3.7 * Gi, CPUP99Millis: 450, ThrottleRatio: 0.02, OOMContainers: 0, Restarts: 1},
+	},
+	// Tight cluster: replicas within a few percent of each other, ~1.02x —
+	// matching the real spread measured for a zone-aware ingester in
+	// production, where a stateful workload's writes spread evenly by design.
+	"mimir-ingester-zone-a": {
+		{Pod: "mimir-ingester-zone-a-0", MemP99Bytes: 4.80 * Gi, MemMaxBytes: 5.60 * Gi, CPUP99Millis: 1450, ThrottleRatio: 0.011, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-ingester-zone-a-1", MemP99Bytes: 4.75 * Gi, MemMaxBytes: 5.55 * Gi, CPUP99Millis: 1430, ThrottleRatio: 0.010, OOMContainers: 0, Restarts: 0},
+		{Pod: "mimir-ingester-zone-a-2", MemP99Bytes: 4.70 * Gi, MemMaxBytes: 5.50 * Gi, CPUP99Millis: 1410, ThrottleRatio: 0.009, OOMContainers: 0, Restarts: 0},
+	},
+}
+
 // Source implements the component lister against the fixtures.
 type Source struct{ cfg config.Config }
 
@@ -226,6 +270,7 @@ func (p *Provider) Usage(_ context.Context, t metrics.Target) (metrics.Usage, er
 			Restarts:      f.restarts,
 			Series:        synthSeries(t.Name, f.memP99, p.cfg.SparkPoints),
 			Coverage:      f.coverage,
+			Pods:          podFixtures[f.name],
 			Queries: []metrics.Sample{
 				{Expr: "demo: memory working set p99", Value: f.memP99},
 				{Expr: "demo: cpu p99 (millicores)", Value: f.cpuP99},
