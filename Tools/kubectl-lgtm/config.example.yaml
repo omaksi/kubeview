@@ -1,0 +1,91 @@
+# kubectl-lgtm config file.
+#
+# Copy to ~/.config/kubectl-lgtm/config.yaml, or point at it with --config.
+# Everything here is optional; flags win over this file, which wins over the
+# built-in defaults.
+
+# ─── discovery ───────────────────────────────────────────────────────────────
+
+# Where to look. Omit entirely to search every namespace you can list, which is
+# the right answer when the stack is split across mimir/loki/tempo namespaces.
+# Falls back to your kubeconfig namespace if a cluster-wide list is forbidden.
+namespaces: [mimir, loki, tempo, monitoring]
+
+# Narrow discovery with a label selector. Useful when the observability
+# namespace also holds unrelated workloads.
+selector: app.kubernetes.io/part-of=memberlist
+
+# Workload kinds to consider. Drop DaemonSet if you don't want to see the
+# collection agents.
+kinds: [Deployment, StatefulSet, DaemonSet]
+
+# Keep workloads that could not be classified as part of the stack.
+all: false
+
+# ─── pod matching ────────────────────────────────────────────────────────────
+
+# How a workload's pods are found in PromQL.
+#
+#   kind   — derive the regex from Kubernetes' own pod naming:
+#            <sts>-<ordinal>, <deploy>-<rs-hash>-<pod-hash>, <ds>-<suffix>.
+#            Exact, and cannot bleed between workloads whose names prefix one
+#            another (loki-ingester vs loki-ingester-zone-a).
+#   prefix — the loose <workload>-.* form. Only for pods named unusually.
+podMatch: kind
+
+# Escape hatch for a workload whose pods neither mode can express.
+# podMatchOverrides:
+#   legacy-cortex: "cortex-ingester-(a|b)-[0-9]+"
+
+# ─── data sources ────────────────────────────────────────────────────────────
+
+# Prefer a separate meta-monitoring Prometheus. Querying the Mimir you are
+# managing means the tool goes blind exactly when you need it.
+promURL: http://prometheus.monitoring:9090
+grafanaURL: https://grafana.example.com
+
+# Durations accept d and w as well as the usual h/m/s.
+window: 14d
+step: 1h
+minWindow: 6h
+
+# ─── metric names ────────────────────────────────────────────────────────────
+
+# Only set the ones your deployment renamed; the rest keep their defaults.
+# A wrong metric name renders exactly like a healthy stack, so check these
+# first when the screen is suspiciously quiet.
+# metrics:
+#   memWorkingSet: container_memory_working_set_bytes
+#   cpuUsage: container_cpu_usage_seconds_total
+#   throttledPeriods: container_cpu_cfs_throttled_periods_total
+#   totalPeriods: container_cpu_cfs_periods_total
+#   lastTerminatedReason: kube_pod_container_status_last_terminated_reason
+#   restarts: kube_pod_container_status_restarts_total
+
+# ─── classification ──────────────────────────────────────────────────────────
+
+classify:
+  # Label keys consulted, in order, before falling back to the workload name.
+  # Setting these replaces the defaults.
+  # productLabels: [app.kubernetes.io/name, app.kubernetes.io/part-of, app]
+  # roleLabels: [app.kubernetes.io/component, app.kubernetes.io/target]
+
+  # Aliases that identify a product, in labels or in the name. Merged per
+  # product with the built-ins, so naming one does not lose the others.
+  # products:
+  #   mimir: [mimir, cortex, metrics-store]
+
+  # Extra roles to recognise in workload names. Merged with the built-ins and
+  # sorted longest-first internally, so order here does not matter.
+  # Matching is on whole dash-separated segments: "all" matches `mimir-all`
+  # but not `mimir-smallish`.
+  # roles: [sharder]
+
+  # Force the classification of workloads a naming convention cannot express.
+  # Applied first and wins outright. `name` is a regex; `namespace` is optional
+  # and exact.
+  # overrides:
+  #   - namespace: observability
+  #     name: "^lgtm-.*"
+  #     product: mimir
+  #     role: all
