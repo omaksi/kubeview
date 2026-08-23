@@ -1,0 +1,65 @@
+name: Release kubectl-lgtm
+
+# A separate tag namespace from release.yml's ['v*'] on purpose: tagging a
+# Go-only fix here must not rebuild, codesign, notarize and staple both
+# macOS apps and push both casks for zero app changes. 'kubectl-lgtm-v*'
+# never matches 'v*' in either direction - verified with `git tag -l`
+# against both tag shapes before this file was written.
+on:
+  push:
+    tags: ['kubectl-lgtm-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. kubectl-lgtm-v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # No macOS-specific work here - no codesign, no notarize, and Go
+    # cross-compiles cleanly (checked locally with GOOS=linux GOARCH=amd64
+    # go build ./... and go vet ./... - both clean). Cheaper and faster
+    # than macos-14 for a job that's just "go build, go test, tag it".
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Tools/kubectl-lgtm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Tools/kubectl-lgtm/go.mod
+
+      - name: Resolve tag
+        id: ver
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # The tag must not cut a release if the suite is red.
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      # Build-from-source Homebrew formula: no assets to attach, just a
+      # tagged, tested commit for the formula to point `url`/`sha256` at.
+      # Deliberately no tap push here, unlike release.yml's casks - nothing
+      # in this repo generates the formula today, so bumping it stays a
+      # manual step rather than a second, half-tested path into the tap.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "kubectl-lgtm ${{ steps.ver.outputs.tag }}" \
+            --generate-notes
