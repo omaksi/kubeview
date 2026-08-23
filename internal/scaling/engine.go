@@ -5,8 +5,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/omaksi/kubectl-lgtm/internal/config"
 	"github.com/omaksi/kubectl-lgtm/internal/format"
 	"github.com/omaksi/kubectl-lgtm/internal/k8s"
+	"github.com/omaksi/kubectl-lgtm/internal/metrics"
 )
 
 // Engine runs the rule catalogue over one component at a time.
@@ -19,6 +21,9 @@ func New(rules ...Rule) *Engine { return &Engine{rules: rules} }
 // way to extend this tool: implement Rule, append here, done.
 func DefaultRules() []Rule {
 	return []Rule{
+		// Health first: a component that is not running makes every sizing
+		// finding about it provisional.
+		Unhealthy{},
 		OOMKilled{},
 		MemoryNearLimit{},
 		CPUThrottling{},
@@ -37,14 +42,17 @@ func Default() *Engine { return New(DefaultRules()...) }
 func (e *Engine) Analyze(in Input) Result {
 	res := Result{Component: in.Component, Usage: in.Usage}
 
-	if in.Usage.Coverage > 0 && in.Usage.Coverage < in.Cfg.MinWindow {
-		res.Note = fmt.Sprintf("only %s of history available, %s required — no recommendations",
-			format.Duration(in.Usage.Coverage), format.Duration(in.Cfg.MinWindow))
-		return res
-	}
+	// Thin history silences everything that reasons about the window, but not
+	// what is read straight from the API server. "0/3 replicas ready" is a
+	// fact; suppressing it because metrics are sparse hides the very thing an
+	// operator opened the tool to see.
+	thin := in.Usage.Coverage > 0 && in.Usage.Coverage < in.Cfg.MinWindow
 
 	conf := confidenceFor(in)
 	for _, rule := range e.rules {
+		if thin && needsHistory(rule) {
+			continue
+		}
 		for _, rec := range rule.Eval(in) {
 			rec.Rule = rule.Name()
 			rec.Component = in.Component.Name
@@ -60,10 +68,71 @@ func (e *Engine) Analyze(in Input) Result {
 	sort.SliceStable(res.Recs, func(i, j int) bool {
 		return res.Recs[i].Severity > res.Recs[j].Severity
 	})
-	if len(res.Recs) == 0 && res.Note == "" {
+
+	switch {
+	case thin && len(res.Recs) == 0:
+		res.Note = fmt.Sprintf("only %s of history available, %s required — no recommendations",
+			format.Duration(in.Usage.Coverage), format.Duration(in.Cfg.MinWindow))
+	case thin:
+		res.Note = fmt.Sprintf("only %s of history available, %s required — showing only findings that do not depend on it",
+			format.Duration(in.Usage.Coverage), format.Duration(in.Cfg.MinWindow))
+	case len(res.Recs) == 0:
 		res.Note = "no findings — sized within tolerance"
 	}
 	return res
+}
+
+// AnalyzeNoMetrics evaluates a component with no usage data at all — for
+// --no-metrics, which skips endpoint discovery and every PromQL query rather
+// than letting one fail.
+//
+// It filters by NeedsHistory() explicitly instead of routing a zero Usage
+// through Analyze. That shortcut looks tempting — a zero-value Usage has
+// Coverage == 0, and every rule already guards its own inputs with
+// `if x <= 0 { return nil }` — but Analyze's thin-data gate is
+// `Coverage > 0 && Coverage < MinWindow`, which a zero Coverage fails,
+// leaving thin == false and every rule evaluated. Suppression would then
+// depend on each rule's guard holding forever, which is an implementation
+// detail of the rule, not a promise of this API. Filtering by NeedsHistory()
+// here makes "no metrics were queried" a decision this function owns.
+func (e *Engine) AnalyzeNoMetrics(c k8s.Component, cfg config.Config) Result {
+	in := Input{Component: c, Usage: metrics.Usage{}, Cfg: cfg}
+	res := Result{Component: c, Usage: in.Usage}
+
+	for _, rule := range e.rules {
+		if needsHistory(rule) {
+			continue
+		}
+		for _, rec := range rule.Eval(in) {
+			rec.Rule = rule.Name()
+			rec.Component = c.Name
+			rec.Window = cfg.Window
+			rec.Confidence = Low
+			res.Recs = append(res.Recs, rec)
+		}
+	}
+
+	sort.SliceStable(res.Recs, func(i, j int) bool {
+		return res.Recs[i].Severity > res.Recs[j].Severity
+	})
+
+	if len(res.Recs) == 0 {
+		res.Note = "metrics not queried — no findings from cluster state alone"
+	} else {
+		res.Note = "metrics not queried — showing only findings that do not depend on usage history"
+	}
+	return res
+}
+
+// needsHistory reports whether a rule's output depends on the metrics window.
+//
+// Rules opt out by implementing NeedsHistory() bool; the default is true, so
+// an existing rule keeps being gated unless it says otherwise.
+func needsHistory(r Rule) bool {
+	if h, ok := r.(interface{ NeedsHistory() bool }); ok {
+		return h.NeedsHistory()
+	}
+	return true
 }
 
 // confidenceFor derives confidence from how much of the requested window

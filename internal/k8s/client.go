@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/omaksi/kubectl-lgtm/internal/config"
@@ -22,9 +23,12 @@ import (
 // Client is a read-only view of the cluster. It never mutates anything; the
 // user or ServiceAccount it runs as needs only get/list/watch.
 type Client struct {
-	cs  kubernetes.Interface
-	cfg config.Config
-	clf *Classifier
+	cs kubernetes.Interface
+	// restCfg is retained so the metrics layer can reach a Service through the
+	// API server's proxy, reusing this connection's auth and TLS.
+	restCfg *rest.Config
+	cfg     config.Config
+	clf     *Classifier
 
 	// defaultNS is the kubeconfig context's namespace, used as the fallback
 	// when a cluster-wide list is forbidden.
@@ -71,11 +75,72 @@ func New(cfg config.Config) (*Client, error) {
 
 	return &Client{
 		cs:        cs,
+		restCfg:   restCfg,
 		cfg:       cfg,
 		clf:       clf,
 		defaultNS: defaultNS,
 		scope:     cfg.NamespaceLabel(),
 	}, nil
+}
+
+// Clientset exposes the read-only API client for endpoint discovery.
+func (c *Client) Clientset() kubernetes.Interface { return c.cs }
+
+// RestConfig exposes the resolved connection, so the metrics layer can build a
+// transport that talks to the API server with the same credentials.
+func (c *Client) RestConfig() *rest.Config { return c.restCfg }
+
+// Contexts lists the contexts in the merged kubeconfig, plus the current one.
+//
+// The loading rules already merge every file in $KUBECONFIG with ~/.kube/config,
+// so "scan for kubeconfigs" is the default behaviour rather than something this
+// tool implements.
+func Contexts(kubeconfig string) (names []string, current string, err error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		rules.ExplicitPath = kubeconfig
+	}
+	raw, err := rules.Load()
+	if err != nil {
+		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+	}
+	for name := range raw.Contexts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, raw.CurrentContext, nil
+}
+
+// ProductNamespaces reports the namespaces that actually contain recognised
+// LGTM components.
+//
+// This is what lets the bare binary narrow its own scope: where the stack sits
+// in one namespace there is nothing worth asking, and where it is split across
+// several the operator picks once instead of having to know to pass -n. It
+// ignores cfg.All deliberately — an unrecognised workload is not evidence that
+// a namespace holds the stack.
+func (c *Client) ProductNamespaces(ctx context.Context) ([]string, error) {
+	comps, err := c.listIn(ctx, metav1.NamespaceAll)
+	if err != nil {
+		if !apierrors.IsForbidden(err) || c.defaultNS == "" {
+			return nil, err
+		}
+		// Cluster-wide list forbidden: the kubeconfig namespace is the only
+		// scope available, so there is nothing to choose between.
+		return []string{c.defaultNS}, nil
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	for _, comp := range comps {
+		if comp.Product == ProductUnknown || seen[comp.Namespace] {
+			continue
+		}
+		seen[comp.Namespace] = true
+		out = append(out, comp.Namespace)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // Describe reports the scope actually searched, which is not always the scope

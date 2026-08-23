@@ -79,6 +79,8 @@ func TestRulesFireOnExpectedComponents(t *testing.T) {
 		{"mimir-ingester-zone-a", "memory-over-provisioned", scaling.Warn},
 		{"loki-querier", "memory-over-provisioned", scaling.Warn},
 		{"mimir-distributor", "memory-over-provisioned", scaling.Info}, // 1.8x — worth noting, not warning
+		{"mimir-ruler", "unhealthy", scaling.Critical},                 // 0/2 ready
+		{"mimir-store-gateway", "unhealthy", scaling.Warn},             // 2/3 ready
 	}
 
 	for _, tc := range cases {
@@ -127,14 +129,23 @@ func TestHealthyComponentIsSilent(t *testing.T) {
 	}
 }
 
+// A finding that proposes a change must ship the change. A finding that only
+// reports a fact — "0/3 ready" — must not: there is no config to paste, and a
+// snippet of shell commands would only serve a front end that sits in a
+// terminal. Suggested is what separates the two.
 func TestEveryRecommendationCarriesEvidenceAndSnippet(t *testing.T) {
 	for name, res := range analyzeDemo(t) {
 		for _, rec := range res.Recs {
 			if len(rec.Evidence) == 0 {
 				t.Errorf("%s/%s: recommendation without evidence", name, rec.Rule)
 			}
-			if strings.TrimSpace(rec.Snippet) == "" {
-				t.Errorf("%s/%s: recommendation without a values snippet", name, rec.Rule)
+			proposesChange := strings.TrimSpace(rec.Suggested) != ""
+			hasSnippet := strings.TrimSpace(rec.Snippet) != ""
+			if proposesChange && !hasSnippet {
+				t.Errorf("%s/%s: suggests %q but carries no values snippet", name, rec.Rule, rec.Suggested)
+			}
+			if !proposesChange && hasSnippet {
+				t.Errorf("%s/%s: proposes no change yet carries a snippet — %q", name, rec.Rule, rec.Snippet)
 			}
 			if rec.Window == 0 {
 				t.Errorf("%s/%s: recommendation without a window", name, rec.Rule)
@@ -220,4 +231,75 @@ func TestCollapsedSnippetKeys(t *testing.T) {
 func hasRule(res scaling.Result, rule string) bool {
 	_, ok := findRule(res, rule)
 	return ok
+}
+
+// analyzeNoMetricsDemo mirrors analyzeTopology but goes through
+// AnalyzeNoMetrics directly, the way runJSON does for --no-metrics: no
+// Provider is ever consulted.
+func analyzeNoMetricsDemo(t *testing.T, topology string) map[string]scaling.Result {
+	t.Helper()
+
+	cfg := config.Default()
+	cfg.Demo = true
+	cfg.DemoTopology = topology
+	src := demo.NewSource(cfg)
+	engine := scaling.Default()
+
+	comps, err := src.ListComponents(context.Background())
+	if err != nil {
+		t.Fatalf("list components: %v", err)
+	}
+
+	out := make(map[string]scaling.Result, len(comps))
+	for _, c := range comps {
+		out[c.Name] = engine.AnalyzeNoMetrics(c, cfg)
+	}
+	return out
+}
+
+// --no-metrics must still surface a fact the API server itself reports — "0/2
+// ready" — even though no PromQL ever ran, and must not let any
+// history-dependent rule slip through on the zeroed Usage it synthesizes.
+// This is the deliberate-filtering behaviour AnalyzeNoMetrics exists for:
+// Coverage == 0 fails Analyze's own thin-data gate (Coverage > 0 && Coverage
+// < MinWindow), so routing a zero Usage through Analyze would run every rule
+// instead of just the cluster-state ones.
+func TestNoMetricsSurfacesOnlyHealthFindings(t *testing.T) {
+	results := analyzeNoMetricsDemo(t, "large")
+
+	res, ok := results["mimir-ruler"]
+	if !ok {
+		t.Fatal("no result for mimir-ruler")
+	}
+	rec, ok := findRule(res, "unhealthy")
+	if !ok {
+		t.Fatalf("expected an unhealthy finding with no metrics queried, got %v", rulesFired(res))
+	}
+	if rec.Severity != scaling.Critical {
+		t.Errorf("mimir-ruler/unhealthy severity = %v, want Critical", rec.Severity)
+	}
+
+	for name, res := range results {
+		for _, rec := range res.Recs {
+			if rec.Rule != "unhealthy" {
+				t.Errorf("%s: rule %q fired with no metrics queried, want only cluster-state rules", name, rec.Rule)
+			}
+		}
+		if res.Usage.Coverage != 0 || len(res.Usage.Series) != 0 {
+			t.Errorf("%s: usage not zeroed: %+v", name, res.Usage)
+		}
+	}
+}
+
+// A component with nothing wrong at the API-server level must stay silent —
+// no metrics were queried, so there is nothing a sizing rule could have said
+// anyway, but the silence must be explained rather than just absent.
+func TestNoMetricsHealthyComponentIsSilent(t *testing.T) {
+	res := analyzeNoMetricsDemo(t, "large")["tempo-ingester"]
+	if len(res.Recs) != 0 {
+		t.Errorf("expected tempo-ingester to be silent with no metrics queried, got %v", rulesFired(res))
+	}
+	if res.Note == "" {
+		t.Error("expected a note explaining why there are no findings")
+	}
 }

@@ -81,6 +81,12 @@ var largeFixtures = []fixture{
 	{"mimir-compactor", "mimir", "StatefulSet", lbl("mimir", "compactor"), 1, 1, 2000, 4000, 16 * Gi, 24 * Gi,
 		11.8 * Gi, 13.2 * Gi, 1900, 0.03, 0, 0, fullWindow},
 
+	// Crash-looping with nothing in the memory numbers to explain it: the
+	// shape the first live run found on a real mimir-distributor (0/3 ready,
+	// 434 restarts). Every sizing rule is blind to this one.
+	{"mimir-ruler", "mimir", "Deployment", lbl("mimir", "ruler"), 2, 0, 500, 1000, 1 * Gi, 2 * Gi,
+		120 * Mi, 180 * Mi, 40, 0.00, 0, 434, fullWindow},
+
 	{"loki-ingester", "loki", "StatefulSet", lbl("loki", "ingester"), 3, 3, 1500, 3000, 6 * Gi, 8 * Gi,
 		5.2 * Gi, 5.8 * Gi, 1120, 0.05, 0, 1, fullWindow},
 	{"loki-querier", "loki", "Deployment", lbl("loki", "querier"), 4, 4, 1000, 2000, 3 * Gi, 4 * Gi,
@@ -99,6 +105,22 @@ var largeFixtures = []fixture{
 
 	{"grafana", "monitoring", "Deployment", lbl("grafana", ""), 2, 2, 250, 500, 1 * Gi, 1 * Gi,
 		380 * Mi, 450 * Mi, 90, 0.00, 0, 0, fullWindow},
+
+	// Four separate caches that mimir-distributed backs with the shared
+	// memcached subchart, all labelled app.kubernetes.io/component: memcached
+	// — same product, same label-derived role, distinguished only by name.
+	// This is the fixture for the title-collision bug: before
+	// k8s.Component.Title() fell back to a name-derived qualifier when the
+	// role does not appear in the name, all four rendered as the
+	// indistinguishable "mimir/memcached". See TestNoTwoComponentsShareATitle.
+	{"mimir-chunks-cache", "mimir", "StatefulSet", lbl("mimir", "memcached"), 2, 2, 250, 500, 2 * Gi, 2 * Gi,
+		1.1 * Gi, 1.3 * Gi, 210, 0.01, 0, 0, fullWindow},
+	{"mimir-index-cache", "mimir", "StatefulSet", lbl("mimir", "memcached"), 2, 2, 250, 500, 2 * Gi, 2 * Gi,
+		1.0 * Gi, 1.2 * Gi, 200, 0.01, 0, 0, fullWindow},
+	{"mimir-metadata-cache", "mimir", "StatefulSet", lbl("mimir", "memcached"), 2, 2, 250, 500, 1 * Gi, 1 * Gi,
+		520 * Mi, 610 * Mi, 150, 0.00, 0, 0, fullWindow},
+	{"mimir-results-cache", "mimir", "StatefulSet", lbl("mimir", "memcached"), 2, 2, 250, 500, 1 * Gi, 1 * Gi,
+		480 * Mi, 560 * Mi, 140, 0.00, 0, 0, fullWindow},
 }
 
 // smallFixtures model a collapsed deployment: one namespace, single-binary
