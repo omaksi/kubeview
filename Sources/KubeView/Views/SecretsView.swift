@@ -14,7 +14,7 @@ struct SecretsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "secrets") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "secrets")
+                LoadingPlaceholder(label: "secrets", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards
@@ -28,7 +28,7 @@ struct SecretsView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { s in
-                    ResourceCard(ref: .init(kind: .secret, key: s.id)) {
+                    ResourceCard(ref: .init(kind: .secret, key: s.id), context: store.context) {
                         SecretCardBody(secret: s)
                     }
                 }

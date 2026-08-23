@@ -61,7 +61,7 @@ struct IngressesView: View {
                 ViewModeToggle(mode: $mode)
             }
             if filteredIngresses.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "ingresses")
+                LoadingPlaceholder(label: "ingresses", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards
@@ -75,7 +75,7 @@ struct IngressesView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                 ForEach(filteredIngresses) { ing in
-                    ResourceCard(ref: .ingress(ing.namespace, ing.name)) {
+                    ResourceCard(ref: .ingress(ing.namespace, ing.name), context: store.context) {
                         VStack(alignment: .leading, spacing: 6) {
                             IngressCardBody(ingress: ing)
                             Text(ing.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

@@ -25,7 +25,7 @@ struct NamespacesView: View {
                 }
             }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "namespaces")
+                LoadingPlaceholder(label: "namespaces", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards

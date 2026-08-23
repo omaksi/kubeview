@@ -22,14 +22,16 @@ struct ServiceAccountsView: View {
                 ViewModeToggle(mode: $mode)
             }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: irsaOnly ? "IRSA service accounts" : "service accounts")
+                LoadingPlaceholder(label: irsaOnly ? "IRSA service accounts" : "service accounts",
+                                   activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { sa in
-                                ResourceCard(ref: .init(kind: irsaOnly ? .irsa : .serviceAccount, key: sa.id)) {
+                                ResourceCard(ref: .init(kind: irsaOnly ? .irsa : .serviceAccount, key: sa.id),
+                                             context: store.context) {
                                     saCard(sa: sa)
                                 }
                             }

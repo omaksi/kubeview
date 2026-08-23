@@ -3,22 +3,26 @@ import SwiftUI
 /// Wraps a card body with subtle left accent stripe (resource kind) and an
 /// emoji overlay. Right-click opens the emoji picker. Pass `navigable: true`
 /// to show a chevron affordance indicating a drill-down is available.
+/// `context` is only used for the "Describe…" sheet's kubectl call - pass
+/// the caller's cluster context (kinds with no `kubectlResource` never show
+/// the menu item, so any placeholder value is fine for those).
 struct ResourceCard<Content: View>: View {
     let ref: ResourceRef
     let navigable: Bool
     let dimmed: Bool
+    let context: String
     @EnvironmentObject var emojis: EmojiStore
-    @EnvironmentObject var store: ClusterStore
     @State private var describeOpen = false
     @State private var hovering = false
     @State private var emojiInput: String = ""
     @FocusState private var emojiFieldFocused: Bool
     let content: Content
 
-    init(ref: ResourceRef, navigable: Bool = false, dimmed: Bool = false, @ViewBuilder content: () -> Content) {
+    init(ref: ResourceRef, navigable: Bool = false, dimmed: Bool = false, context: String, @ViewBuilder content: () -> Content) {
         self.ref = ref
         self.navigable = navigable
         self.dimmed = dimmed
+        self.context = context
         self.content = content()
     }
 
@@ -79,7 +83,7 @@ struct ResourceCard<Content: View>: View {
             }
         }
         .sheet(isPresented: $describeOpen) {
-            DescribeSheet(ref: ref, context: store.context, isOpen: $describeOpen)
+            DescribeSheet(ref: ref, context: context, isOpen: $describeOpen)
         }
     }
 }

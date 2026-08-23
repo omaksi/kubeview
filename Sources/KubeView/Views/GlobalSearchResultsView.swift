@@ -112,7 +112,7 @@ struct GlobalSearchResultsView: View {
                     grid(280) {
                         ForEach(pods) { pod in
                             NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
-                                ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
+                                ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true, context: store.context) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         PodCardBody(pod: pod)
                                         Text(pod.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)
@@ -126,7 +126,7 @@ struct GlobalSearchResultsView: View {
                     grid(300) {
                         ForEach(deployments) { d in
                             let ref = ResourceRef(kind: .deployment, key: d.id)
-                            ResourceCard(ref: ref) {
+                            ResourceCard(ref: ref, context: store.context) {
                                 WorkloadCardBody(ref: ref, name: d.name, namespace: d.namespace,
                                                  desired: d.desired, ready: d.ready,
                                                  kindLabel: "Deployment", strategy: d.strategy,
@@ -139,7 +139,7 @@ struct GlobalSearchResultsView: View {
                     grid(300) {
                         ForEach(statefulSets) { s in
                             let ref = ResourceRef(kind: .statefulSet, key: s.id)
-                            ResourceCard(ref: ref) {
+                            ResourceCard(ref: ref, context: store.context) {
                                 WorkloadCardBody(ref: ref, name: s.name, namespace: s.namespace,
                                                  desired: s.desired, ready: s.ready,
                                                  kindLabel: "StatefulSet", strategy: s.serviceName,
@@ -152,7 +152,7 @@ struct GlobalSearchResultsView: View {
                     grid(300) {
                         ForEach(daemonSets) { d in
                             let ref = ResourceRef(kind: .daemonSet, key: d.id)
-                            ResourceCard(ref: ref) {
+                            ResourceCard(ref: ref, context: store.context) {
                                 WorkloadCardBody(ref: ref, name: d.name, namespace: d.namespace,
                                                  desired: d.desired, ready: d.ready,
                                                  kindLabel: "DaemonSet", strategy: nil,
@@ -164,7 +164,7 @@ struct GlobalSearchResultsView: View {
                 section(title: "Services", kind: .service, count: services.count) {
                     grid(280) {
                         ForEach(services) { svc in
-                            ResourceCard(ref: .service(svc.namespace, svc.name)) {
+                            ResourceCard(ref: .service(svc.namespace, svc.name), context: store.context) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     ServiceCardBody(service: svc)
                                     Text(svc.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)
@@ -176,7 +176,7 @@ struct GlobalSearchResultsView: View {
                 section(title: "Ingresses", kind: .ingress, count: ingresses.count) {
                     grid(320) {
                         ForEach(ingresses) { ing in
-                            ResourceCard(ref: .ingress(ing.namespace, ing.name)) {
+                            ResourceCard(ref: .ingress(ing.namespace, ing.name), context: store.context) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     IngressCardBody(ingress: ing)
                                     Text(ing.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)
@@ -187,37 +187,43 @@ struct GlobalSearchResultsView: View {
                 }
                 section(title: "ConfigMaps", kind: .configMap, count: configMaps.count) {
                     grid(300) { ForEach(configMaps) { cm in
-                        ResourceCard(ref: .init(kind: .configMap, key: cm.id)) { ConfigMapCardBody(configMap: cm) }
+                        ResourceCard(ref: .init(kind: .configMap, key: cm.id), context: store.context) {
+                            ConfigMapCardBody(configMap: cm)
+                        }
                     } }
                 }
                 section(title: "Secrets", kind: .secret, count: secrets.count) {
                     grid(280) { ForEach(secrets) { s in
-                        ResourceCard(ref: .init(kind: .secret, key: s.id)) { SecretCardBody(secret: s) }
+                        ResourceCard(ref: .init(kind: .secret, key: s.id), context: store.context) {
+                            SecretCardBody(secret: s)
+                        }
                     } }
                 }
                 section(title: "Jobs", kind: .job, count: jobs.count) {
                     grid(280) { ForEach(jobs) { j in
-                        ResourceCard(ref: .init(kind: .job, key: j.id)) { SimpleNameNamespaceBody(name: j.name, namespace: j.namespace, sub: "active=\(j.active) succeeded=\(j.succeeded) failed=\(j.failed)") }
+                        ResourceCard(ref: .init(kind: .job, key: j.id), context: store.context) { SimpleNameNamespaceBody(name: j.name, namespace: j.namespace, sub: "active=\(j.active) succeeded=\(j.succeeded) failed=\(j.failed)") }
                     } }
                 }
                 section(title: "CronJobs", kind: .cronJob, count: cronJobs.count) {
                     grid(280) { ForEach(cronJobs) { cj in
-                        ResourceCard(ref: .init(kind: .cronJob, key: cj.id)) { SimpleNameNamespaceBody(name: cj.name, namespace: cj.namespace, sub: cj.schedule) }
+                        ResourceCard(ref: .init(kind: .cronJob, key: cj.id), context: store.context) { SimpleNameNamespaceBody(name: cj.name, namespace: cj.namespace, sub: cj.schedule) }
                     } }
                 }
                 section(title: "HPAs", kind: .hpa, count: hpas.count) {
                     grid(280) { ForEach(hpas) { h in
-                        ResourceCard(ref: .init(kind: .hpa, key: h.id)) { SimpleNameNamespaceBody(name: h.name, namespace: h.namespace, sub: "→ \(h.targetKind)/\(h.targetName)") }
+                        ResourceCard(ref: .init(kind: .hpa, key: h.id), context: store.context) { SimpleNameNamespaceBody(name: h.name, namespace: h.namespace, sub: "→ \(h.targetKind)/\(h.targetName)") }
                     } }
                 }
                 section(title: "PVCs", kind: .pvc, count: pvcs.count) {
                     grid(280) { ForEach(pvcs) { p in
-                        ResourceCard(ref: .init(kind: .pvc, key: p.id)) { PVCCardBody(pvc: p) }
+                        ResourceCard(ref: .init(kind: .pvc, key: p.id), context: store.context) {
+                            PVCCardBody(pvc: p)
+                        }
                     } }
                 }
                 section(title: "NetworkPolicies", kind: .networkPolicy, count: networkPolicies.count) {
                     grid(280) { ForEach(networkPolicies) { np in
-                        ResourceCard(ref: .init(kind: .networkPolicy, key: np.id)) {
+                        ResourceCard(ref: .init(kind: .networkPolicy, key: np.id), context: store.context) {
                             SimpleNameNamespaceBody(name: np.name, namespace: np.namespace,
                                                     sub: "ingress=\(np.ingressRuleCount) egress=\(np.egressRuleCount)")
                         }
@@ -225,7 +231,7 @@ struct GlobalSearchResultsView: View {
                 }
                 section(title: "ServiceAccounts", kind: .serviceAccount, count: serviceAccounts.count) {
                     grid(280) { ForEach(serviceAccounts) { sa in
-                        ResourceCard(ref: .init(kind: .serviceAccount, key: sa.id)) {
+                        ResourceCard(ref: .init(kind: .serviceAccount, key: sa.id), context: store.context) {
                             SimpleNameNamespaceBody(name: sa.name, namespace: sa.namespace,
                                                     sub: sa.irsaRoleArn ?? "—")
                         }
@@ -233,7 +239,7 @@ struct GlobalSearchResultsView: View {
                 }
                 section(title: "StorageClasses", kind: .storageClass, count: storageClasses.count) {
                     grid(280) { ForEach(storageClasses) { sc in
-                        ResourceCard(ref: .init(kind: .storageClass, key: sc.name)) {
+                        ResourceCard(ref: .init(kind: .storageClass, key: sc.name), context: store.context) {
                             VStack(alignment: .leading, spacing: 4) {
                                 ResourceTitle(ref: .init(kind: .storageClass, key: sc.name), name: sc.name)
                                 Text(sc.provisioner ?? "-").font(.caption.monospaced()).foregroundStyle(.secondary)
@@ -243,7 +249,7 @@ struct GlobalSearchResultsView: View {
                 }
                 section(title: "Nodes", kind: .node, count: nodes.count) {
                     grid(320) { ForEach(nodes) { n in
-                        ResourceCard(ref: .node(n.name)) {
+                        ResourceCard(ref: .node(n.name), context: store.context) {
                             NodeCardBody(node: n,
                                          usage: store.nodeUsage.first { $0.name == n.name },
                                          showMetrics: store.metricsAvailable)

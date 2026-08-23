@@ -24,7 +24,7 @@ struct NamespaceDetailView: View {
                     else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                             ForEach(ingresses) { ing in
-                                ResourceCard(ref: .ingress(ing.namespace, ing.name)) {
+                                ResourceCard(ref: .ingress(ing.namespace, ing.name), context: store.context) {
                                     IngressCardBody(ingress: ing)
                                 }
                             }
@@ -36,7 +36,7 @@ struct NamespaceDetailView: View {
                     else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                             ForEach(services) { svc in
-                                ResourceCard(ref: .service(svc.namespace, svc.name)) {
+                                ResourceCard(ref: .service(svc.namespace, svc.name), context: store.context) {
                                     ServiceCardBody(service: svc)
                                 }
                             }
@@ -49,7 +49,7 @@ struct NamespaceDetailView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                             ForEach(pods) { pod in
                                 NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
-                                    ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
+                                    ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true, context: store.context) {
                                         PodCardBody(pod: pod)
                                     }
                                 }

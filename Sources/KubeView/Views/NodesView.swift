@@ -18,7 +18,7 @@ struct NodesView: View {
             .padding(8).background(.bar)
 
             if store.nodes.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "nodes")
+                LoadingPlaceholder(label: "nodes", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards
@@ -32,7 +32,7 @@ struct NodesView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                 ForEach(store.nodes) { node in
-                    ResourceCard(ref: .node(node.name)) {
+                    ResourceCard(ref: .node(node.name), context: store.context) {
                         NodeCardBody(node: node,
                                      usage: store.nodeUsage.first { $0.name == node.name },
                                      showMetrics: store.metricsAvailable)

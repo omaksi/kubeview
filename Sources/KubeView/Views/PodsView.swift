@@ -14,7 +14,7 @@ struct PodsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "pods") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "pods")
+                LoadingPlaceholder(label: "pods", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards
@@ -29,7 +29,7 @@ struct PodsView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { pod in
                     NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
-                        ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
+                        ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true, context: store.context) {
                             VStack(alignment: .leading, spacing: 6) {
                                 PodCardBody(pod: pod)
                                 Text(pod.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

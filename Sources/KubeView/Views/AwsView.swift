@@ -62,7 +62,9 @@ private struct AwsProfileCard: View {
     private var busy: Bool { aws.busy.contains(profile.name) }
 
     var body: some View {
-        ResourceCard(ref: profile.ref) {
+        // .awsProfile has no kubectlResource, so Describe… never shows and
+        // this context value is never actually read.
+        ResourceCard(ref: profile.ref, context: "") {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     ResourceTitle(ref: profile.ref, name: profile.name)

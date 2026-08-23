@@ -24,7 +24,7 @@ struct DeploymentsView: View {
                 }
             }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "deployments")
+                LoadingPlaceholder(label: "deployments", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards
@@ -39,7 +39,7 @@ struct DeploymentsView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { d in
                     let ref = ResourceRef(kind: .deployment, key: d.id)
-                    ResourceCard(ref: ref) {
+                    ResourceCard(ref: ref, context: store.context) {
                         WorkloadCardBody(
                             ref: ref,
                             name: d.name, namespace: d.namespace,
@@ -84,7 +84,7 @@ struct StatefulSetsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "statefulsets") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "statefulsets")
+                LoadingPlaceholder(label: "statefulsets", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
@@ -92,7 +92,7 @@ struct StatefulSetsView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { ss in
                                 let ref = ResourceRef(kind: .statefulSet, key: ss.id)
-                                ResourceCard(ref: ref) {
+                                ResourceCard(ref: ref, context: store.context) {
                                     WorkloadCardBody(
                                         ref: ref,
                                         name: ss.name, namespace: ss.namespace,
@@ -144,7 +144,7 @@ struct ReplicaSetsView: View {
                 }
             }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "replicasets")
+                LoadingPlaceholder(label: "replicasets", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
@@ -152,7 +152,7 @@ struct ReplicaSetsView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { rs in
                                 let ref = ResourceRef(kind: .replicaSet, key: rs.id)
-                                ResourceCard(ref: ref) {
+                                ResourceCard(ref: ref, context: store.context) {
                                     WorkloadCardBody(
                                         ref: ref,
                                         name: rs.name, namespace: rs.namespace,
@@ -196,14 +196,14 @@ struct JobsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "jobs") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "jobs")
+                LoadingPlaceholder(label: "jobs", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { job in
-                                ResourceCard(ref: .init(kind: .job, key: job.id)) {
+                                ResourceCard(ref: .init(kind: .job, key: job.id), context: store.context) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
                                             ResourceTitle(ref: .init(kind: .job, key: job.id), name: job.name)
@@ -259,14 +259,14 @@ struct CronJobsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "cronjobs") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "cronjobs")
+                LoadingPlaceholder(label: "cronjobs", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { cj in
-                                ResourceCard(ref: .init(kind: .cronJob, key: cj.id)) {
+                                ResourceCard(ref: .init(kind: .cronJob, key: cj.id), context: store.context) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
                                             ResourceTitle(ref: .init(kind: .cronJob, key: cj.id), name: cj.name)

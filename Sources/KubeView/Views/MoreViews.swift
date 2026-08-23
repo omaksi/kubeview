@@ -16,7 +16,7 @@ struct DaemonSetsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "daemonsets") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "daemonsets")
+                LoadingPlaceholder(label: "daemonsets", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
@@ -24,7 +24,7 @@ struct DaemonSetsView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { ds in
                                 let ref = ResourceRef(kind: .daemonSet, key: ds.id)
-                                ResourceCard(ref: ref) {
+                                ResourceCard(ref: ref, context: store.context) {
                                     WorkloadCardBody(
                                         ref: ref,
                                         name: ds.name, namespace: ds.namespace,
@@ -69,14 +69,14 @@ struct ConfigMapsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "configmaps") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "configmaps")
+                LoadingPlaceholder(label: "configmaps", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { cm in
-                                ResourceCard(ref: .init(kind: .configMap, key: cm.id)) {
+                                ResourceCard(ref: .init(kind: .configMap, key: cm.id), context: store.context) {
                                     ConfigMapCardBody(configMap: cm)
                                 }
                             }
@@ -179,14 +179,14 @@ struct HPAsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "HPAs") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "HPAs")
+                LoadingPlaceholder(label: "HPAs", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { h in
-                                ResourceCard(ref: .init(kind: .hpa, key: h.id)) {
+                                ResourceCard(ref: .init(kind: .hpa, key: h.id), context: store.context) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
                                             ResourceTitle(ref: .init(kind: .hpa, key: h.id), name: h.name)

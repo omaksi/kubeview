@@ -23,7 +23,7 @@ struct OverviewView: View {
         if search.isActive {
             GlobalSearchResultsView()
         } else if store.isFirstLoad {
-            LoadingPlaceholder(label: "cluster")
+            LoadingPlaceholder(label: "cluster", activity: store.activity, activitySince: store.activitySince)
         } else {
             dashboard
         }
@@ -278,12 +278,13 @@ struct NamespaceCard: View {
     let metricsAvailable: Bool
     @EnvironmentObject var emojis: EmojiStore
     @EnvironmentObject var stars: StarStore
+    @EnvironmentObject var store: ClusterStore
 
     private var isEmpty: Bool { ns.podCount == 0 }
 
     var body: some View {
         NavigationLink(value: AppRoute.namespace(NamespaceRoute(name: ns.name))) {
-            ResourceCard(ref: .namespace(ns.name), navigable: true, dimmed: isEmpty) {
+            ResourceCard(ref: .namespace(ns.name), navigable: true, dimmed: isEmpty, context: store.context) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         ResourceTitle(ref: .namespace(ns.name), name: ns.name,

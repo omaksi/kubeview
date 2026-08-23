@@ -26,7 +26,7 @@ struct ViewModeToggle: View {
 
 /// Per-view header: count + optional trailing (usually the view-mode toggle).
 /// The search field itself lives at the top of the window (`GlobalSearchBar`)
-/// and drives every view through `SearchState`.
+/// and drives every view through the app's global search state.
 struct ViewHeader<Trailing: View>: View {
     let count: Int
     let label: String
@@ -53,10 +53,12 @@ struct ViewHeader<Trailing: View>: View {
 /// the very first refresh, before any data has arrived. Gate usage on
 /// `store.isFirstLoad` (plus an emptiness check, so a partial refresh still
 /// shows what it got) — never on `lastRefresh` alone, or a failed first
-/// refresh spins forever.
+/// refresh spins forever. Pass the store's `activity`/`activitySince` through
+/// explicitly so the "still working" chatter below keeps working.
 struct LoadingPlaceholder: View {
     let label: String
-    @EnvironmentObject var store: ClusterStore
+    var activity: String? = nil
+    var activitySince: Date? = nil
 
     /// Below this, extra chatter is noise — a normal first load resolves well
     /// inside it. Past it, silence reads as a hang, so say what we're waiting on.
@@ -69,12 +71,12 @@ struct LoadingPlaceholder: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            if let since = store.activitySince {
+            if let since = activitySince {
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     let elapsed = ctx.date.timeIntervalSince(since)
                     if elapsed >= chattyAfter {
                         VStack(spacing: 6) {
-                            Text("\(store.activity ?? "Working")… \(Int(elapsed))s")
+                            Text("\(activity ?? "Working")… \(Int(elapsed))s")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                             if elapsed >= 8 {

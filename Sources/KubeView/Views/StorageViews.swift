@@ -14,14 +14,14 @@ struct PVCsView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "PVCs") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "PVCs")
+                LoadingPlaceholder(label: "PVCs", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { pvc in
-                                ResourceCard(ref: .init(kind: .pvc, key: pvc.id)) {
+                                ResourceCard(ref: .init(kind: .pvc, key: pvc.id), context: store.context) {
                                     PVCCardBody(pvc: pvc)
                                 }
                             }
@@ -89,14 +89,14 @@ struct StorageClassesView: View {
             .padding(8).background(.bar)
 
             if store.storageClasses.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "storage classes")
+                LoadingPlaceholder(label: "storage classes", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                             ForEach(store.storageClasses) { sc in
-                                ResourceCard(ref: .init(kind: .storageClass, key: sc.name)) {
+                                ResourceCard(ref: .init(kind: .storageClass, key: sc.name), context: store.context) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         ResourceTitle(ref: .init(kind: .storageClass, key: sc.name), name: sc.name)
                                         HStack(spacing: 4) {

@@ -34,7 +34,7 @@ struct LinkerdView: View {
 
     var body: some View {
         if store.isFirstLoad {
-            LoadingPlaceholder(label: "mesh")
+            LoadingPlaceholder(label: "mesh", activity: store.activity, activitySince: store.activitySince)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -73,7 +73,7 @@ struct LinkerdView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                     ForEach(controlPlanePods) { pod in
                         NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
-                            ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
+                            ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true, context: store.context) {
                                 PodCardBody(pod: pod)
                             }
                         }
@@ -118,7 +118,7 @@ struct LinkerdView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(meshedPods) { pod in
                     NavigationLink(value: PodRoute(namespace: pod.namespace, name: pod.name)) {
-                        ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
+                        ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true, context: store.context) {
                             VStack(alignment: .leading, spacing: 6) {
                                 PodCardBody(pod: pod)
                                 Text(pod.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

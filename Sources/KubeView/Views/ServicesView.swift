@@ -14,7 +14,7 @@ struct ServicesView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "services") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "services")
+                LoadingPlaceholder(label: "services", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards: cards
@@ -28,7 +28,7 @@ struct ServicesView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 10)], spacing: 10) {
                 ForEach(filtered) { svc in
-                    ResourceCard(ref: .service(svc.namespace, svc.name)) {
+                    ResourceCard(ref: .service(svc.namespace, svc.name), context: store.context) {
                         VStack(alignment: .leading, spacing: 6) {
                             ServiceCardBody(service: svc)
                             Text(svc.namespace).font(.caption2.monospaced()).foregroundStyle(.secondary)

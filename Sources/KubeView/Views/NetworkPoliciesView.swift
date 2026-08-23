@@ -14,14 +14,14 @@ struct NetworkPoliciesView: View {
         VStack(spacing: 0) {
             ViewHeader(count: filtered.count, label: "policies") { ViewModeToggle(mode: $mode) }
             if filtered.isEmpty && store.isFirstLoad {
-                LoadingPlaceholder(label: "network policies")
+                LoadingPlaceholder(label: "network policies", activity: store.activity, activitySince: store.activitySince)
             } else {
                 switch mode {
                 case .cards:
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                             ForEach(filtered) { np in
-                                ResourceCard(ref: .init(kind: .networkPolicy, key: np.id)) {
+                                ResourceCard(ref: .init(kind: .networkPolicy, key: np.id), context: store.context) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
                                             ResourceTitle(ref: .init(kind: .networkPolicy, key: np.id), name: np.name)

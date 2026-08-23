@@ -279,7 +279,7 @@ struct LgtmClusterView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                 ForEach(sorted) { row in
                     LgtmClusterComponentCard(row: row, metricsAvailable: store.metricsAvailable,
-                                              podMetricsByID: podMetricsByID)
+                                              podMetricsByID: podMetricsByID, context: store.context)
                         .id(row.id)  // scroll target for graph-node taps, see handleGraphSelect
                 }
             }
@@ -570,6 +570,7 @@ private struct LgtmClusterComponentCard: View {
     let metricsAvailable: Bool
     /// Keyed by "namespace/name" - the per-pod bars below, and the spread facts.
     let podMetricsByID: [String: PodMetrics]
+    let context: String
 
     private var readyColor: Color {
         row.desired == 0 ? .secondary : (row.ready == row.desired ? .green : .orange)
@@ -630,7 +631,7 @@ private struct LgtmClusterComponentCard: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 8)], spacing: 8) {
                     ForEach(row.pods.sorted { $0.name < $1.name }) { pod in
                         NavigationLink(value: AppRoute.pod(PodRoute(namespace: pod.namespace, name: pod.name))) {
-                            ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true) {
+                            ResourceCard(ref: .pod(pod.namespace, pod.name), navigable: true, context: context) {
                                 LgtmPodUsageCardBody(
                                     pod: pod,
                                     metrics: metricsAvailable ? podMetricsByID["\(pod.namespace)/\(pod.name)"] : nil,
