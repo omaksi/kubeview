@@ -15,7 +15,7 @@ It adapts to how your stack is actually deployed — one namespace or five, micr
 
 ## Why read-only
 
-The tool runs as *you*, with your kubeconfig, so Kubernetes RBAC does the authorization. There is no ingress, no OIDC, no long-lived ServiceAccount with permission to scale production, and nothing to protect. It needs `get`/`list`/`watch` on `deployments` and `statefulsets` in one namespace.
+The tool runs as *you*, with your kubeconfig, so Kubernetes RBAC does the authorization. There is no ingress, no OIDC, no long-lived ServiceAccount with permission to scale production, and nothing to protect. It needs `get`/`list`/`watch` on `deployments`, `statefulsets`, `daemonsets` and `services`, plus `get` on `services/proxy` so it can reach the metrics store through the API server rather than asking you to port-forward. Pass `--prom-url` instead and the `services/proxy` grant is not needed at all.
 
 Changes go through your normal GitOps review: read a finding, press `y`, paste into the values file, open the MR.
 
@@ -39,10 +39,12 @@ Named `kubectl-lgtm`, so anywhere on `$PATH` it is also invocable as `kubectl lg
 ## Usage
 
 ```
-kubectl lgtm --demo
-kubectl lgtm                                     # search every namespace you can list
-kubectl lgtm -n mimir,loki,tempo --prom-url http://mimir-query-frontend:8080/prometheus
+kubectl lgtm                                     # pick a cluster, find its metrics store, go
+kubectl lgtm --context stg-eks                   # skip the picker
+kubectl lgtm -n mimir,loki,tempo                 # limit the search
+kubectl lgtm --prom-url http://localhost:9090    # bypass discovery entirely
 kubectl lgtm -l app.kubernetes.io/part-of=memberlist --window 7d
+kubectl lgtm --demo
 ```
 
 | Flag | Default | Notes |
@@ -51,7 +53,10 @@ kubectl lgtm -l app.kubernetes.io/part-of=memberlist --window 7d
 | `-l, --selector` | — | label selector for discovery |
 | `--kinds` | Deployment, StatefulSet, DaemonSet | replaces the default set |
 | `--pod-match` | `kind` | `kind` or `prefix` — see below |
-| `--prom-url` | `http://localhost:9090` | Prometheus or Mimir query endpoint |
+| `--context` | — | kubeconfig context; omit it and the tool asks which cluster |
+| `--prom-url` | discovered | Prometheus or Mimir query endpoint; set it to skip discovery |
+| `--tenant` | — | Mimir tenant, sent as `X-Scope-OrgID` |
+| `--match` | — | extra PromQL label matchers, e.g. `cluster="inno-shared-eks"` |
 | `--window` | 14d | lookback for every recommendation |
 | `--step` | `1h` | inner resolution of range queries — keep coarse |
 | `--min-window` | `6h` | below this, no recommendations are produced |
@@ -60,6 +65,16 @@ kubectl lgtm -l app.kubernetes.io/part-of=memberlist --window 7d
 | `--config` | `~/.config/kubectl-lgtm/config.yaml` | see `config.example.yaml` |
 | `--demo` | off | synthetic data, no cluster or Prometheus needed |
 | `--demo-topology` | `large` | `large` (microservices) or `small` (single binary) |
+
+### How it finds things
+
+Run the bare binary and it works out what to do: reads every kubeconfig in `$KUBECONFIG` and `~/.kube/config` and asks which cluster; finds the namespaces that actually hold LGTM components and asks which one — but only when there is a real choice, so a stack in a single namespace is never a question; picks a query endpoint; then probes it with `vector(1)` to confirm it really speaks PromQL before adopting it.
+
+On a central store that holds several clusters, the header says so and tells you to pass `--match`. Namespace and pod names repeat across clusters, so without a matcher a component's memory can come back as the max across all of them and look like a perfectly ordinary number.
+
+Endpoint ranking is an allow-list — a Mimir gateway, then Thanos query, then Prometheus, then a Mimir query-frontend. The gateway outranks the query-frontend because it injects a default `X-Scope-OrgID`, so multi-tenant Mimir answers without `--tenant`. Anything unrecognised is never tried: an observability namespace is full of HTTP services that are not query APIs, and adopting the wrong one sends every rule silently to zero.
+
+Queries reach the Service through the API server's proxy, so **no local port is opened** — nothing to allocate, collide, leak or clean up.
 
 Point `--prom-url` at a **separate meta-monitoring** Prometheus if you have one. Querying the Mimir you are managing means the tool goes blind exactly when you need it.
 

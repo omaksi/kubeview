@@ -50,9 +50,18 @@ func severityColor(s scaling.Severity) lipgloss.TerminalColor {
 // severityBadge renders the short severity tag used in the table and detail
 // pane. Components with no findings get a green tick rather than a blank, so a
 // healthy stack reads as healthy at a glance.
+// It must stay UNSTYLED. bubbles truncates every cell with
+// runewidth.Truncate(value, col.Width, "…"), which counts ANSI escape bytes as
+// visible runes: a styled "CRIT" is ~25 runes against a column width of 5, so
+// it gets cut mid-escape and the terminal eats the rest of the row's colour.
+// Headless tests cannot catch this — lipgloss drops to a no-colour profile
+// there, where the badge really is 4 runes and fits.
+//
+// Colour lives in the detail pane, where nothing truncates it; in the table,
+// worst-first ordering carries the signal instead.
 func severityBadge(s scaling.Severity, any bool) string {
 	if !any {
-		return okStyle.Render("  ok")
+		return "ok"
 	}
-	return lipgloss.NewStyle().Foreground(severityColor(s)).Bold(true).Render(s.String())
+	return s.String()
 }

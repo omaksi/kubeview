@@ -30,9 +30,9 @@ func renderTopology(t *testing.T, topology string, width, height int) string {
 	cfg.Demo = true
 	cfg.DemoTopology = topology
 
-	var m tea.Model = New(cfg, demo.NewSource(cfg), demo.NewProvider(cfg))
+	var m tea.Model = New(cfg, demo.NewSource(cfg), demo.NewProvider(cfg), nil)
 
-	loaded := m.(Model).Init()()
+	loaded := m.(Model).load()()
 	if msg, ok := loaded.(resultsMsg); ok && msg.err != nil {
 		t.Fatalf("load failed: %v", msg.err)
 	}
@@ -74,8 +74,8 @@ func TestSelectionIsValidOnFirstPaint(t *testing.T) {
 	cfg := config.Default()
 	cfg.Demo = true
 
-	var m tea.Model = New(cfg, demo.NewSource(cfg), demo.NewProvider(cfg))
-	loaded := m.(Model).Init()()
+	var m tea.Model = New(cfg, demo.NewSource(cfg), demo.NewProvider(cfg), nil)
+	loaded := m.(Model).load()()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: testWidth, Height: testHeight})
 	m, _ = m.Update(loaded)
 
@@ -133,8 +133,8 @@ func TestDetailPaneShowsEvidenceForSelection(t *testing.T) {
 	cfg := config.Default()
 	cfg.Demo = true
 
-	var m tea.Model = New(cfg, demo.NewSource(cfg), demo.NewProvider(cfg))
-	loaded := m.(Model).Init()()
+	var m tea.Model = New(cfg, demo.NewSource(cfg), demo.NewProvider(cfg), nil)
+	loaded := m.(Model).load()()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: testWidth, Height: testHeight})
 	m, _ = m.Update(loaded)
 

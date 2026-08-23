@@ -34,9 +34,9 @@ func renderDetail(res scaling.Result, cfg config.Config, width int) string {
 
 	prim := c.Primary()
 	b.WriteString(kv("requests", fmt.Sprintf("cpu %s   memory %s",
-		format.Millis(prim.CPURequest), format.Quantity(prim.MemRequest)), width))
+		format.Millis(prim.CPURequest), format.Bytes(float64(prim.MemRequest))), width))
 	b.WriteString(kv("limits", fmt.Sprintf("cpu %s   memory %s",
-		format.Millis(prim.CPULimit), format.Quantity(prim.MemLimit)), width))
+		format.Millis(prim.CPULimit), format.Bytes(float64(prim.MemLimit))), width))
 	b.WriteString(kv("observed", fmt.Sprintf("cpu p99 %s   memory p99 %s   peak %s",
 		format.MillisFloat(u.CPUP99Millis), format.Bytes(u.MemP99Bytes), format.Bytes(u.MemMaxBytes)), width))
 	b.WriteString(kv("throttled", format.Percent(u.ThrottleRatio), width))

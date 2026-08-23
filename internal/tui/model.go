@@ -9,11 +9,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,29 +22,33 @@ import (
 	"github.com/omaksi/kubectl-lgtm/internal/clipboard"
 	"github.com/omaksi/kubectl-lgtm/internal/config"
 	"github.com/omaksi/kubectl-lgtm/internal/format"
-	"github.com/omaksi/kubectl-lgtm/internal/k8s"
 	"github.com/omaksi/kubectl-lgtm/internal/metrics"
 	"github.com/omaksi/kubectl-lgtm/internal/scaling"
 )
 
-// Source lists the components to analyse. Both the live cluster client and the
-// demo fixtures satisfy it, which is the whole of the --demo implementation.
-type Source interface {
-	ListComponents(ctx context.Context) ([]k8s.Component, error)
-	// Describe reports the scope actually searched. It is not always the scope
-	// requested — a cluster-wide list can fall back to one namespace — so the
-	// header shows what happened rather than what was asked for.
-	Describe() string
-}
+// Source is re-exported so front ends need only import this package to wire
+// themselves up. The analysis it feeds lives in scaling.Run.
+type Source = scaling.Source
 
-// maxConcurrentQueries bounds the fan-out against Prometheus. Each component
-// issues six queries, and a 40-component stack would otherwise open 240 at once.
-const maxConcurrentQueries = 8
+// Connect resolves the metrics provider.
+//
+// It runs inside the program rather than before it, so that finding an
+// endpoint shows a spinner and its progress, and a failure lands in the UI.
+// The first version did this in main() and a slow cluster looked exactly like
+// a hung terminal for a minute, followed by a wall of text on stderr.
+type Connect func(ctx context.Context, progress func(string)) (metrics.Provider, error)
 
 type resultsMsg struct {
 	results []scaling.Result
 	err     error
 }
+
+type connectedMsg struct {
+	prov metrics.Provider
+	err  error
+}
+
+type progressMsg string
 
 type statusMsg struct {
 	text  string
@@ -55,15 +59,22 @@ type clearStatusMsg struct{}
 
 // Model is the Bubble Tea model.
 type Model struct {
-	cfg    config.Config
-	source Source
-	prov   metrics.Provider
-	engine *scaling.Engine
+	cfg     config.Config
+	source  Source
+	prov    metrics.Provider
+	connect Connect
+	engine  *scaling.Engine
 
 	table  table.Model
 	detail viewport.Model
 	help   help.Model
 	keys   keyMap
+	spin   spinner.Model
+
+	// step is the latest line from Connect, shown beside the spinner so a
+	// slow discovery reads as work rather than as a hang.
+	step     string
+	progress chan string
 
 	results []scaling.Result
 	loading bool
@@ -79,7 +90,13 @@ type Model struct {
 }
 
 // New builds the model. Nothing is fetched until Init runs.
-func New(cfg config.Config, src Source, prov metrics.Provider) Model {
+//
+// connect may be nil when the provider is already known, which is what --demo
+// does: fixtures need no discovery, so the spinner phase is skipped entirely.
+func New(cfg config.Config, src Source, prov metrics.Provider, connect Connect) Model {
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+	sp.Style = lipgloss.NewStyle().Foreground(colAccent)
+
 	t := table.New(table.WithFocused(true))
 	st := table.DefaultStyles()
 	st.Header = st.Header.Bold(true).Foreground(colMuted).
@@ -88,66 +105,75 @@ func New(cfg config.Config, src Source, prov metrics.Provider) Model {
 	t.SetStyles(st)
 
 	return Model{
-		cfg:     cfg,
-		source:  src,
-		prov:    prov,
-		engine:  scaling.Default(),
-		table:   t,
-		help:    help.New(),
-		keys:    defaultKeys(),
-		loading: true,
+		cfg:      cfg,
+		source:   src,
+		prov:     prov,
+		connect:  connect,
+		engine:   scaling.Default(),
+		table:    t,
+		help:     help.New(),
+		keys:     defaultKeys(),
+		spin:     sp,
+		progress: make(chan string, 8),
+		loading:  true,
 	}
 }
 
-func (m Model) Init() tea.Cmd { return m.load() }
+func (m Model) Init() tea.Cmd {
+	if m.connect == nil {
+		return tea.Batch(m.spin.Tick, m.load())
+	}
+	return tea.Batch(m.spin.Tick, m.doConnect(), waitProgress(m.progress))
+}
 
-// load fetches components and their usage, then runs the rule engine. Usage
-// queries fan out because they are network-bound and independent.
+// doConnect resolves the provider off the UI goroutine, reporting each step
+// through a buffered channel. Sends are dropped rather than blocked: progress
+// text is worth nothing if reporting it can stall the work it describes.
+func (m Model) doConnect() tea.Cmd {
+	connect, ch := m.connect, m.progress
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		prov, err := connect(ctx, func(s string) {
+			select {
+			case ch <- s:
+			default:
+			}
+		})
+		close(ch)
+		return connectedMsg{prov: prov, err: err}
+	}
+}
+
+func waitProgress(ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		s, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return progressMsg(s)
+	}
+}
+
+// load runs the analysis off the UI goroutine and hands back the results.
 func (m Model) load() tea.Cmd {
 	cfg, src, prov, engine := m.cfg, m.source, m.prov, m.engine
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		comps, err := src.ListComponents(ctx)
+		results, err := scaling.Run(ctx, cfg, src, prov, engine)
 		if err != nil {
 			return resultsMsg{err: err}
 		}
-		if len(comps) == 0 {
+		if len(results) == 0 {
 			return resultsMsg{err: fmt.Errorf(
 				"no LGTM components found in %s\n\n"+
 					"try --namespace to point somewhere else, --selector to widen the match,\n"+
 					"--all to keep workloads that were not recognised, or --demo to see the UI",
 				src.Describe())}
 		}
-
-		results := make([]scaling.Result, len(comps))
-		sem := make(chan struct{}, maxConcurrentQueries)
-		var wg sync.WaitGroup
-
-		for i, c := range comps {
-			wg.Add(1)
-			go func(i int, c k8s.Component) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-
-				usage, uerr := prov.Usage(ctx, metrics.Target{
-					Namespace:  c.Namespace,
-					Name:       c.Name,
-					PodPattern: c.PodPattern,
-				})
-				res := engine.Analyze(scaling.Input{Component: c, Usage: usage, Cfg: cfg})
-				if uerr != nil {
-					// Without usage data there is nothing to recommend, and
-					// saying so beats presenting an empty row as healthy.
-					res.Recs = nil
-					res.Note = "metrics unavailable: " + uerr.Error()
-				}
-				results[i] = res
-			}(i, c)
-		}
-		wg.Wait()
 		return resultsMsg{results: results}
 	}
 }
@@ -160,6 +186,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.layout()
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+
+	case progressMsg:
+		m.step = string(msg)
+		return m, waitProgress(m.progress)
+
+	case connectedMsg:
+		if msg.err != nil {
+			m.loading = false
+			m.err = msg.err
+			m.layout()
+			return m, nil
+		}
+		m.prov, m.step = msg.prov, ""
+		// A caveat about the store invalidates every number the rules produce,
+		// so it has to be said before the first table is drawn — the header has
+		// no room for it and silently dropped it when it was glued to the
+		// source description.
+		if w, ok := msg.prov.(interface{ Warning() string }); ok {
+			if s := w.Warning(); s != "" {
+				m.status, m.statusIsErr = s, true
+			}
+		}
+		return m, m.load()
 
 	case resultsMsg:
 		m.loading = false
@@ -186,6 +240,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Refresh):
 			m.loading = true
 			m.status = ""
+			m.err = nil
+			// Retry the whole thing when discovery is what failed — otherwise
+			// "press r to retry" re-runs a query against a provider that was
+			// never resolved.
+			if m.prov == nil && m.connect != nil {
+				m.progress = make(chan string, 8)
+				return m, tea.Batch(m.spin.Tick, m.doConnect(), waitProgress(m.progress))
+			}
 			return m, m.load()
 
 		case key.Matches(msg, m.keys.Help):
@@ -298,11 +360,14 @@ func (m Model) rows(innerW int) []table.Row {
 			name:      c.Name,
 			kind:      c.Kind,
 			ready:     fmt.Sprintf("%d/%d", c.ReadyReplicas, c.Replicas),
-			memReq:    format.Quantity(c.Primary().MemRequest),
-			memP99:    format.Bytes(u.MemP99Bytes),
-			cpuP99:    format.MillisFloat(u.CPUP99Millis),
-			trend:     Sparkline(u.Series, m.sparkWidth()),
-			findings:  findings,
+			// Bytes, not Quantity: a chart may configure memory in milli-bytes
+			// (tempo ships "2576980377600m"), which is an exact but unreadable
+			// 2516583Ki. Snippets still use Quantity, where exactness matters.
+			memReq:   format.Bytes(float64(c.Primary().MemRequest)),
+			memP99:   format.Bytes(u.MemP99Bytes),
+			cpuP99:   format.MillisFloat(u.CPUP99Millis),
+			trend:    Sparkline(u.Series, m.sparkWidth()),
+			findings: findings,
 		}
 
 		row := make(table.Row, 0, len(specs))
@@ -514,10 +579,17 @@ func (m Model) View() string {
 				"\n\n" + mutedStyle.Render("press r to retry, q to quit"))
 	}
 	if m.loading {
+		what := "looking for a metrics endpoint…"
+		switch {
+		case m.prov != nil:
+			what = fmt.Sprintf("querying %s over a %s window…",
+				m.prov.Describe(), format.Duration(m.cfg.Window))
+		case m.step != "":
+			what = m.step
+		}
 		return lipgloss.NewStyle().Padding(1, 2).Render(
 			titleStyle.Render("kubectl-lgtm") + "\n\n" +
-				mutedStyle.Render(fmt.Sprintf("querying %s over a %s window…",
-					m.prov.Describe(), format.Duration(m.cfg.Window))))
+				m.spin.View() + " " + mutedStyle.Render(what))
 	}
 
 	tablePane, detailPane := paneStyle, paneStyle

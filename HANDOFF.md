@@ -2,7 +2,7 @@
 
 Running state between sessions. Update the date and the sections below when you finish a chunk of work.
 
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-19
 
 ---
 
@@ -15,7 +15,13 @@ brew install omaksi/tap/kubectl-lgtm
 kubectl lgtm --demo
 ```
 
-**Still never run against a real cluster.** Everything is verified against `internal/demo` fixtures only. The `default` kube context has no LGTM stack and no Prometheus — no `monitoring`, `mimir`, `loki` or `observability` namespace exists. That is the single biggest caveat in this repo and the reason v0.1.0's README leads with a status warning.
+**Now run against a real stack.** 2026-08-18, against `inno-shared-eks` ns `observability` — a live `lgtm-distributed` microservices deployment (Mimir/Loki/Tempo, 3 ingesters each). 28 components discovered, classification correct off the `app.kubernetes.io/*` labels, all six configured metric names present, every PromQL query accepted, 3 critical + 14 warning findings. Findings were checked against `kubectl` and were true: the alloy OOMKill is real, and it correctly surfaced a `mimir-distributor` sitting at 0/3 with 434 restarts.
+
+That run also confirmed there is **no separate meta-monitoring Prometheus** — the Mimir being managed stores its own metrics, so the tool goes blind exactly when Mimir is what broke.
+
+**Two of the three bugs it found are now fixed** (2026-08-20): the SEV column renders correctly on a colour terminal, and configured memory no longer renders as `2516583Ki`. The third — cross-cluster aggregation — has a `--match` flag and a header warning, but no automatic cluster selection.
+
+Also added since: a context picker and a namespace picker (asked only when there is a real choice), API-server-proxy endpoint discovery so no port-forward is needed, and an `unhealthy` rule.
 
 ## Where things live
 
@@ -34,6 +40,7 @@ Cutting a new version is currently **manual**: tag, `gh release create`, `shasum
 |---|---|
 | `internal/config` | Flags + optional YAML file. Precedence defaults < file < flags, via `fs.Visit`. Durations accept `d`/`w`. Config path is `~/.config/kubectl-lgtm/config.yaml` (not `os.UserConfigDir`, which is wrong on macOS for CLIs). |
 | `internal/k8s` | Multi-namespace discovery with label selector and kind filter; falls back to the kubeconfig namespace when a cluster-wide list is forbidden. Config-driven `Classifier`. Untested against real labels. |
+| `internal/metrics` (discovery) | Picks a query endpoint itself: lists Services, ranks by an allow-list (Mimir gateway > Thanos > Prometheus > Mimir query-frontend), probes with `vector(1)`, reaches it through the API server service proxy. No local port, no port-forward. `--prom-url` skips it; `--tenant` sets `X-Scope-OrgID`. Unit-tested with a fake clientset; **not yet run live**. |
 | `internal/metrics` | 6 PromQL scalars + 1 range query per component, against a `Target` carrying the pod regex. Per-query failures degrade gracefully; total failure returns an error the TUI surfaces per row. Never executed against a real Prometheus. |
 | `internal/scaling` | 4 rules (below). Engine handles gating, confidence, severity sort. Advice and snippet keys vary by deployment mode. |
 | `internal/tui` | Table + scrollable detail pane, sparklines, `y` copy, `g` Grafana Explore, `r` refresh, `?` help. Responsive 80→220 cols; namespace column appears only when results span several. |
@@ -54,6 +61,8 @@ Thresholds are named constants at the top of each `rule_*.go`. They were picked 
 
 | Decision | Why |
 |---|---|
+| API server service proxy, not port-forward | Opens no local port at all, and needs `get services/proxy` rather than `create pods/portforward` — a create verb sits badly on a read-only tool. No goroutine or cleanup to leak. `--prom-url` keeps the zero-extra-RBAC path available. |
+| Context picker before connecting | "Single executable, no flags" was the explicit ask. `clientcmd`'s default loading rules already merge `$KUBECONFIG` with `~/.kube/config`, so scanning is free; `--context` still skips the prompt for scripts. |
 | App, not an operator | The hard problem is usage analysis and recommendation UX, not reconciliation. An operator owning replicas/resources would also fight ArgoCD `selfHeal` in this cluster. |
 | TUI, not web | Deletes auth entirely — runs as the user, k8s RBAC authorizes. No ingress, no cert, no OIDC, no privileged ServiceAccount that can scale prod. |
 | Read-only, no MR flow | User's explicit call. Display recommendations only; `y` copies the snippet instead. The `Snippet` field is already shaped so a PR path can be added later without touching the rules. |
@@ -69,7 +78,21 @@ Thresholds are named constants at the top of each `rule_*.go`. They were picked 
 
 ## Next up
 
-### 1. Run it against a real stack — everything else is guesswork until this happens
+### 1. What is left of the three bugs
+
+**Fixed:** SEV truncation (`severityBadge` is plain text; `internal/tui/color_test.go` forces a truecolor profile and fails without the fix — verified by reverting). Milli-byte quantities (display uses `format.Bytes`, snippets keep exact `format.Quantity`).
+
+**Partly fixed:** cross-cluster aggregation. `--match` appends label matchers to every selector, and discovery warns in the header when the store holds more than one cluster. It does **not** auto-select one: mapping a kube context to a `cluster` label value is a guess, and a wrong guess here is invisible. Worth revisiting once the real label values are known.
+
+### 1b. The original bug list (for reference)
+
+**a. The SEV column is garbage on any real terminal.** `severityBadge()` hands a lipgloss-styled string to `table.Row`; bubbles v1.0.0 `table.go:435` truncates cells with `runewidth.Truncate(value, col.Width, "…")`, which is ANSI-unaware. Styled `"CRIT"` is ~25 runes against width 5, so it is cut mid-escape. 15 occurrences in plain `--demo` on a pty. **The whole test suite is structurally blind to it**: headless tests get lipgloss's no-color profile, where the badge is bare `"WARN"` and fits. Any fix needs a test that forces a truecolor profile before rendering. bubbles v1.0.0 has no `StyleFunc`, so keeping colour in the table means owning the truncation.
+
+**b. `format.Quantity` mangles milli-byte quantities.** The tempo chart really does set `memory: "2576980377600m"` (≈2.4Gi); it renders as `2516583Ki` and overflows the column. No fixture had this shape.
+
+**c. No PromQL-side label matcher, and the Mimir is multi-cluster.** Seven clusters ship to it and they all have `observability`/`argocd`/`kube-system`. Nothing pins `cluster=`, so `max()` will span clusters as soon as more than one ships container metrics. Auto-discovery makes this worse, not better — it will happily adopt a store that aggregates clusters you are not looking at.
+
+### 1c. Run it against a real stack again
 
 On a machine with kubeconfig access to a live LGTM cluster:
 
