@@ -6,6 +6,9 @@ Instructions for Claude Code when working in this repo.
 
 Native macOS desktop app for viewing Kubernetes clusters. SwiftUI, SPM executable,
 macOS 14+. Shells out to `kubectl` (no native k8s client) — intentional for MVP.
+This is the primary app; the repo also ships a second, standalone app,
+`LgtmView`, built from shared lower-layer modules (see "Layout") - most of
+this document is about `KubeView` specifically unless a section says otherwise.
 
 ## Featureset (as of v0.3.0)
 
@@ -22,7 +25,8 @@ macOS 14+. Shells out to `kubectl` (no native k8s client) — intentional for MV
 
 **Cross-cutting:**
 - **Multi-cluster**: `ClusterManager` supervises a `ClusterStore` per active context; each has its own refresh loop. No kubeconfig mutation — every kubectl call uses `--context`. Active contexts and selection persist via `UserDefaults`.
-- **The app's selection is its own, and must stay that way.** `kubectl config current-context` is read in `KubeViewKit/ClusterManager.swift:39` and only to seed a first run. `bootstrap()` must call `persistActive()` before returning: it activates with `persist: false`, so without that call an untouched install never writes `kubeview.activeContexts`, falls into the seed branch on *every* launch, and silently follows whatever the terminal last switched to. That was a real bug — it hides as soon as the user adds or removes a cluster by hand, which is what makes it easy to misdiagnose.
+- **Tabs** (`TabStore` + `TabStripView`): a window holds multiple tabs, each a `WorkspaceTab` carrying its own context *and* namespace, plus which sidebar view it was showing - so two tabs on the same cluster can look at different namespaces without disturbing each other. `TabStore` owns the tab list, ordering and focus, persisted so the workspace survives a relaunch. Only the focused tab's cluster polls at the normal 5s cadence (`ClusterStore.goLive()`); every other open tab's cluster gets a cheap 60s health-only probe (`goBackground()`) instead of the full refresh batch, and a cluster with no tab left open at all is stopped and evicted (`ClusterManager.applyCadence`, driven by `TabStore.openContexts` and the active tab).
+- **The app's selection is its own, and must stay that way.** The rule is not "read the ambient context once" - it is **the ambient context may seed an initial choice, but must never route a request.** Every kubectl call carries an explicit `--context`; `KubectlService(context:)`'s nil default is the enforcement point (see Design rules). Three sites legitimately read `kubectl config current-context` as a first-run bootstrap heuristic, never again after: `KubeViewKit/ClusterManager.swift:39` (seeds the cluster list), `KubeViewKit/KubeViewScenes.swift:104` (seeds which tab opens first), `LgtmViewKit/LgtmViewScenes.swift:110` (seeds the standalone LGTM app's initial context). The LGTM app's version is the interesting one: it deliberately restricts the read to first-run-only, the same restriction `ClusterManager` places on itself, so its selection does not later follow whatever a terminal's `kubectl use-context` last set. In `ClusterManager`, `bootstrap()` must call `persistActive()` before returning: it activates with `persist: false`, so without that call an untouched install never writes `kubeview.activeContexts`, falls into the seed branch on *every* launch, and silently follows the terminal instead. That was a real bug - it hides as soon as the user adds or removes a cluster by hand, which is what makes it easy to misdiagnose.
 - **Namespace filter** (`ClusterStore.namespaceFilter` + `NamespacePicker`): pop-up in the top bar between the cluster pills and the search box, always visible. `nil` = All Namespaces, which is the default. Selecting one scopes every namespaced list view — pods, all workload kinds, services, ingresses, network policies, PVCs, configmaps, secrets, service accounts/IRSA, HPAs, cluster events and the cross-resource search results — via `Collection.inNamespace(_:_:)`. Cluster-scoped kinds (nodes, storage classes, the Namespaces list) and the cluster-wide summaries (Overview stats/grid, Linkerd mesh coverage) are untouched by design.
 - **Resource graph** (`ResourceGraph` + `NamespaceGraphView`): namespace drill-down renders its resources as a directed graph, Argo-CD style. **No new kubectl calls** — `metadata.uid` and `metadata.ownerReferences` were always in the JSON kubectl returns, `ObjectMeta` just didn't decode them; Service→Pod is client-side selector matching, Ingress→Service and HPA→target come from fields already decoded. Layout is a **static tier table + one barycenter pass**, not a layering algorithm: columns are then made *dense*, so a namespace with no Ingress doesn't render an empty gutter. Pods past `fanOutCap` (15) under one owner collapse into a "+N more" node, matching how NamespaceCard shows 3 unhealthy workloads then a count. Pan/zoom is applied **once at the container** (`scaleEffect`/`offset` on the whole content) — per-node transforms would re-lay-out every node each gesture frame. Nodes are chips rather than `ResourceCard`: the card's hover state and emoji picker are far too heavy a few hundred times over. An **empty selector matches nothing** (`matches(selector:labels:)`), or every headless/edge Service would draw an edge to every pod in the namespace. `ResourceGraph` is pure — no SwiftUI, no I/O — so its `selfCheck` asserts are the whole test story, and it is the one place in this codebase where testing is straightforward and expected.
 - **Global search** (`SearchState` + `GlobalSearchBar`, ⌘F): top-of-window box, context-aware. On Overview it triggers `GlobalSearchResultsView` (groups hits across every resource kind, hides empty groups). On any list view it filters that view via `Collection.searchFiltered(_:_:)`.
@@ -65,7 +69,7 @@ Sources/
 │   ├── Core.swift                # ObjectMeta, OwnerReference, LabelSelector, ObjectReference, StringOrInt, KubeContext
 │   ├── Pod.swift                 # Pod, PodSpec, Container, container/pod statuses, Pod.healthState
 │   ├── Node.swift                # Node, NodeStatus, NodeInfo
-│   ├── Namespace.swift           # Namespace, NamespaceStatus
+│   ├── Namespace.swift           # KubeNamespace (see "Module layering" - `Namespace` collides with SwiftUI's `@Namespace`), NamespaceStatus
 │   ├── Workloads.swift           # Deployment, StatefulSet, ReplicaSet, Job, CronJob, DaemonSet + their ready/desired extensions
 │   ├── Networking.swift          # Service, Ingress, NetworkPolicy
 │   ├── Storage.swift             # PersistentVolumeClaim, StorageClass
@@ -113,7 +117,10 @@ Sources/
 │       └── MenuBarContent.swift          # Tray dropdown
 ├── KubeView/
 │   └── KubeViewApp.swift         # @main - deliberately empty, `KubeViewScenes()` is the whole body (test targets can't reliably import an executable target)
-└── LgtmViewKit/                  # The LGTM stack inspector's logic - library only for now, no `@main` shell yet
+└── LgtmViewKit/                  # The standalone LGTM app's logic - same shape as KubeViewKit
+    ├── LgtmViewScenes.swift      # Scene graph: LgtmContextRoot (its own context picker + toolbar menu, no ClusterManager/tab strip to lean on) hosts LgtmRootView, keyed .id(context)
+    ├── LgtmClusterStore.swift    # Per-context store for the standalone app (this app has no tabs, so one context at a time)
+    ├── PodInspectSheet.swift     # Per-pod drill-down sheet
     ├── LgtmService.swift         # `kubectl-lgtm --json` wire format (LgtmReport/Component/Finding) + decode + selfCheck
     └── Views/
         ├── LgtmView.swift        # LgtmRootView (tab shell: Cluster/Metrics/Findings) + LgtmFindingsView, LgtmStore two-pass loader, LgtmWindow, FindingCard, SeverityTag, Sparkline
@@ -121,23 +128,28 @@ Sources/
         ├── LgtmMetricsView.swift # Metrics tab: per-pod history, headroom, coverage outliers
         ├── LgtmTopology.swift    # LGTM data-path model: per-product edges, lanes, cross-product Alloy/Grafana
         └── LgtmGraphView.swift   # Data-flow graph renderer: Kahn tiering, cycle-safe, saturation + peak-replica mark
+LgtmView/
+└── LgtmViewApp.swift             # @main - deliberately empty, mirrors KubeView/KubeViewApp.swift
 Tools/
-└── kubectl-lgtm/                 # The Go analyser, vendored in via `git subtree` (history intact) - see its own CLAUDE.md/HANDOFF.md
+└── kubectl-lgtm/                 # The Go analyser, vendored in via `git subtree` (history intact) - see its own CLAUDE.md/HANDOFF.md, released independently (see "Release process")
+Tests/
+└── KubeModelTests/, KubeClientTests/, KubeViewKitTests/, LgtmViewKitTests/  # one target per library layer; no KubeUITests - SwiftUI views with no standalone pure logic worth pinning
 Resources/
-└── AppIcon.icns                  # slate→teal hexagon + binoculars (generated by scripts/make_icon.swift)
+└── AppIcon.icns                  # slate→teal hexagon + binoculars (generated by scripts/make_icon.swift); LgtmView gets its own icon, same generator
 scripts/
-├── bundle.sh                     # The one bundling implementation, shared by local dev and CI (release.yml calls it). Wraps a built binary into <name>.app; does NOT embed kubectl-lgtm - that's a Homebrew prerequisite (see "The LGTM view")
-├── check-sources.sh              # Guards against SwiftPM silently dropping a `.swift` file no target covers (see "Module layering")
+├── bundle.sh                     # The one bundling implementation, shared by local dev and CI, parameterized per app (release.yml calls it once per app in a matrix). Wraps a built binary into <name>.app; does NOT embed kubectl-lgtm - that's a Homebrew prerequisite (see "The LGTM view")
+├── check-sources.sh              # Guards against SwiftPM silently dropping a `.swift` file no target covers, under both Sources/ and Tests/ (see "Module layering")
 └── make_icon.swift               # Core Graphics → .iconset → iconutil → AppIcon.icns
 .github/workflows/
-├── release.yml                   # universal binary + icon gen + Developer ID sign + notarize + Release + tap bump
-└── ci.yml                        # swift build + check-sources.sh, on every push and PR
+├── release.yml                   # Builds + signs + notarizes + releases KubeView and LgtmView from one `v*` tag, via a matrix
+├── release-lgtm.yml              # Releases just the Go `kubectl-lgtm` binary, from its own `kubectl-lgtm-v*` tag namespace - a Go-only fix must not re-sign and re-notarize both apps for zero app changes
+└── ci.yml                        # swift build + swift test + check-sources.sh, on every push and PR
 ```
 
 ## Module layering
 
-The split into six targets is not free organization - two rules keep the
-layering real, plus one Swift gotcha it surfaced:
+The module split is not free organization - two rules keep the layering real,
+plus two Swift gotchas it surfaced:
 
 - **`KubeModel` and `KubeClient` must never import SwiftUI.** That is what lets
   a future headless tool (a CLI, a background agent) link the model and the
@@ -151,14 +163,23 @@ layering real, plus one Swift gotcha it surfaced:
 - **SwiftPM silently drops any `.swift` file no target's source set covers** -
   no warning, no error, it simply never compiles. `scripts/check-sources.sh`
   asks `swift package describe` what it actually claims and diffs that against
-  what's on disk; `ci.yml` runs it on every push. Run it yourself after adding
-  or moving a file rather than trusting a clean `swift build`.
+  what's on disk under both `Sources/` and `Tests/` (a misplaced test file is
+  dropped just as silently); `ci.yml` runs it on every push. Run it yourself
+  after adding or moving a file rather than trusting a clean `swift build`.
 - **A synthesized memberwise init on a `public` struct is still `internal`.**
   A public type constructed from a different module - `LogEntry`, built inside
   `KubeClient`'s `LogSink` but read by `KubeViewKit`'s `LogStore` - needs an
   explicit `public init`. `Decodable`'s synthesized `init(from:)` *is* public,
   though, so the Kubernetes model types need no init work; this only bites
   plain structs constructed by hand across a module boundary.
+- **Check any new public `KubeModel` type name against SwiftUI and Foundation
+  before exporting it.** A `public` type is visible everywhere the module is
+  imported, including files that also `import SwiftUI` - a name collision
+  there is a compile error in someone else's file, not yours. `Namespace`
+  collided with SwiftUI's `@Namespace` and cascaded into 49 errors; it's
+  `KubeNamespace` now. `KubeJob`, `KubeEvent` and `KubeContext` exist for the
+  same reason - this is a recurring pattern, not a one-off, so check before
+  naming rather than after.
 
 ## Design rules
 
@@ -341,10 +362,15 @@ The scaling analysis is **not** implemented in Swift. It lives in
 `git subtree` (history intact - see its own `CLAUDE.md`/`HANDOFF.md` there),
 which port-forwards into the cluster's own Mimir/Prometheus, runs six PromQL
 queries per component over a selectable lookback window, and applies a rule
-catalogue. The Swift side lives in its own `LgtmViewKit` module - library
-only for now, no `@main` shell - rather than under `KubeView`; it shells out
-to `kubectl-lgtm --json` the same way `KubeClient` shells out to `kubectl`,
-and renders the result.
+catalogue. The Swift side lives in its own standalone app, `LgtmView`, built
+from the `LgtmViewKit` module rather than living under `KubeView` - it shells
+out to `kubectl-lgtm --json` the same way `KubeClient` shells out to
+`kubectl`, and renders the result. `LgtmViewKit` has no `ClusterManager` or
+tab strip to hand it a cluster the way `KubeView` does, so its own
+`LgtmViewScenes.swift` is the whole of that: a context picker reads the
+kubeconfig, seeds a first-run guess from `kubectl config current-context`
+(see "The app's selection is its own"), and remembers the user's choice from
+then on in its own `UserDefaults` namespace - the two apps share no state.
 
 That split is the point, and it generalises: **this app's data layer is "run a
 CLI, parse its output", so any analysis that already exists as a CLI should stay
@@ -365,11 +391,14 @@ Rules that fall out of it:
 - **The analysis is on-demand, never on the 5s cadence.** `LgtmStore` is cached
   per context so navigating away and back does not re-run it; only the refresh
   button and a window change do.
-- **The analyser is a Homebrew prerequisite, not embedded.** `bundle.sh` no
-  longer places a copy in `Contents/MacOS` - `LgtmService.binary` resolves
-  `/opt/homebrew/bin`, `/usr/local/bin`, then `~/go/bin` (for `swift run`). The
-  lookup still checks the app bundle first, for whenever `LgtmViewKit` gets its
-  own shipped `.app`; until then that check simply never matches.
+- **The analyser is a Homebrew prerequisite, not embedded, even for the
+  standalone `LgtmView.app`.** `bundle.sh` never places a copy in
+  `Contents/MacOS` - `LgtmService.binary` resolves `/opt/homebrew/bin`,
+  `/usr/local/bin`, then `~/go/bin` (for `swift run`); the app-bundle check it
+  tries first simply never matches on either app. The `LgtmView` Homebrew Cask
+  instead declares `depends_on formula: "omaksi/tap/kubectl-lgtm"`, so
+  installing the app pulls the analyser in automatically - `kubectl-lgtm` is
+  released independently from its own tag namespace (see "Release process").
 - **Findings never tell you to run a command.** `kubectl-lgtm` invariant 3b: no flags, no shell. A health finding carries no snippet at all, and `FindingCard` offers **Show pods** instead — it sets the namespace filter, puts the workload name in the global search, and jumps to Pods, where Logs and Describe already live. That is the desktop equivalent of the three `kubectl` commands the tool used to print.
 
 ### Three tabs, in debugging order
@@ -386,7 +415,7 @@ Rules that fall out of it:
 
 **Two passes, because they fail independently and one of them is fast.** `LgtmStore.load()` runs `--no-metrics` first (~1.5s, Kubernetes API only, no port-forward) and paints the Cluster tab, then the full pass (~7s at 24h) fills Metrics and Findings. When the metrics pass fails the Cluster tab is already usable and the other two say so, rather than the window looking broken. That matters because a broken metrics store is exactly what someone opens this view to investigate - the original single-pass design showed nothing at all in that case.
 
-**Whatever hosts `LgtmRootView` must key it on the context** - `.id(store.context)`, not just pass the context in as a parameter. A parent view that keeps its own SwiftUI identity across a cluster switch won't rebuild the `@StateObject` underneath it, and the view goes on showing the previous cluster's report under the new cluster's name. That shipped once, inside `KubeView`'s old `ContentView`, and cost an investigation. The call site is gone now that LGTM has been cut from `KubeView`'s navigation entirely and `LgtmRootView` has no host at all - but the hazard is general, not specific to that deleted call site, and it will resurface the moment something hosts `LgtmRootView` again.
+**Whatever hosts `LgtmRootView` must key it on the context** - `.id(context)`, not just pass the context in as a parameter. A parent view that keeps its own SwiftUI identity across a cluster switch won't rebuild the `@StateObject` underneath it, and the view goes on showing the previous cluster's report under the new cluster's name. That shipped once, inside `KubeView`'s old `ContentView`, and cost an investigation - that call site is gone now that LGTM has been cut from `KubeView`'s navigation entirely. The hazard is general, not specific to that deleted call site, which is why `LgtmContextRoot` (`LgtmViewScenes.swift`, the standalone app's own host) re-establishes the same `.id(context)` keying independently rather than assuming it was inherited from anywhere.
 
 **The lookback defaults to 24h** (`LgtmWindow`), persisted per context, as is the selected tab. Cost is not linear: 1d ~6s, 7d and 14d ~19s, **30d ~2m** - subquery resolution is a cost multiplier at a fixed step. And retention caps it anyway: the reference store holds about 8 days, so 14d and 30d return the same data and 30d merely takes two minutes to do it. `LgtmMetricsView` states the store's median coverage against the requested window rather than letting the picker imply a promise it cannot keep.
 
@@ -452,8 +481,10 @@ open build/KubeView.app              # launches with MenuBarExtra icon top-right
 After editing, always rebuild the bundle — launching the SPM binary directly
 works but MenuBarExtra only behaves correctly inside a `.app`.
 
-The app talks to whatever cluster `kubectl config current-context` points at.
-Switch contexts from the toolbar picker or tray menu, not by restarting.
+`kubectl config current-context` only seeds which tab opens on first launch
+(see "The app's selection is its own" above) - after that the app tracks its
+own tabs and contexts independently. Switch or add clusters from the tab
+strip or tray menu, not by restarting.
 
 ## Release process
 
