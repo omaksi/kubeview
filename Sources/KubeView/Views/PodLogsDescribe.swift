@@ -27,7 +27,16 @@ final class PodLogsLoader: ObservableObject {
     @Published var container: String = ""
     @Published var previous: Bool = false
     @Published var tailLines: Int = 500
-    private let kubectl = KubectlService()
+    private let kubectl: KubectlService
+
+    /// `context` is required, not optional - a `KubectlService` built with no
+    /// context used to run against whatever `kubectl config current-context`
+    /// happened to be, not the cluster this view is actually showing.
+    /// Invisible with one active context, wrong-cluster logs the moment
+    /// there's more than one.
+    init(context: String) {
+        self.kubectl = KubectlService(context: context)
+    }
 
     func load(namespace: String, pod: String) async {
         loading = true
@@ -48,8 +57,16 @@ final class PodLogsLoader: ObservableObject {
 struct PodLogsView: View {
     let route: PodRoute
     let containers: [String]
-    @StateObject private var loader = PodLogsLoader()
+    let context: String
+    @StateObject private var loader: PodLogsLoader
     @State private var filter: String = ""
+
+    init(route: PodRoute, containers: [String], context: String) {
+        self.route = route
+        self.containers = containers
+        self.context = context
+        _loader = StateObject(wrappedValue: PodLogsLoader(context: context))
+    }
 
     var filtered: String {
         guard !filter.isEmpty else { return loader.text }
@@ -175,7 +192,12 @@ final class PodDescribeLoader: ObservableObject {
     @Published var text: String = ""
     @Published var loading = false
     @Published var error: String?
-    private let kubectl = KubectlService()
+    private let kubectl: KubectlService
+
+    /// Same reasoning as `PodLogsLoader.init` - required, not optional.
+    init(context: String) {
+        self.kubectl = KubectlService(context: context)
+    }
 
     func load(route: PodRoute) async {
         loading = true
@@ -192,8 +214,15 @@ final class PodDescribeLoader: ObservableObject {
 
 struct PodDescribeView: View {
     let route: PodRoute
-    @StateObject private var loader = PodDescribeLoader()
+    let context: String
+    @StateObject private var loader: PodDescribeLoader
     @State private var filter: String = ""
+
+    init(route: PodRoute, context: String) {
+        self.route = route
+        self.context = context
+        _loader = StateObject(wrappedValue: PodDescribeLoader(context: context))
+    }
 
     var filtered: String {
         guard !filter.isEmpty else { return loader.text }

@@ -7,7 +7,7 @@ enum NavSection: String, CaseIterable, Identifiable, Codable {
     case services, ingresses, networkpolicies
     case pvcs, storageclasses
     case configmaps, secrets, serviceaccounts, irsa
-    case linkerd, lgtm
+    case linkerd
     case graph
     var id: String { rawValue }
 
@@ -35,7 +35,6 @@ enum NavSection: String, CaseIterable, Identifiable, Codable {
         case .serviceaccounts: return "ServiceAccounts"
         case .irsa: return "IRSA"
         case .linkerd: return "Linkerd"
-        case .lgtm: return "LGTM"
         case .graph: return "Graph"
         }
     }
@@ -64,7 +63,6 @@ enum NavSection: String, CaseIterable, Identifiable, Codable {
         case .serviceaccounts: return "person.badge.key"
         case .irsa: return "person.badge.shield.checkmark"
         case .linkerd: return "link"
-        case .lgtm: return "chart.line.downtrend.xyaxis"
         case .graph: return "point.3.connected.trianglepath.dotted"
         }
     }
@@ -104,12 +102,6 @@ extension NavSection {
         case .linkerd:
             return store.pods.contains { $0.isLinkerdMeshed } ||
                    store.pods.contains { $0.namespace == "linkerd" }
-        case .lgtm:
-            // Cheap name check against workloads already in memory. The real
-            // classification lives in kubectl-lgtm, but running it just to
-            // decide whether to show a sidebar row would cost a port-forward.
-            return store.deployments.contains { isLgtm($0.name) } ||
-                   store.statefulSets.contains { isLgtm($0.name) }
         }
     }
 }
@@ -133,7 +125,7 @@ private let navGroups: [NavGroup] = [
     NavGroup(title: "Network", items: [.services, .ingresses, .networkpolicies]),
     NavGroup(title: "Storage", items: [.pvcs]),
     NavGroup(title: "Config & RBAC", items: [.configmaps, .secrets, .serviceaccounts, .irsa]),
-    NavGroup(title: "Observability", items: [.linkerd, .lgtm]),
+    NavGroup(title: "Observability", items: [.linkerd]),
     NavGroup(title: "Cluster", items: [.nodes, .namespaces, .storageclasses]),
 ]
 
@@ -223,7 +215,7 @@ struct ContentView: View {
         case .nodes:           return store.nodes.count
         case .namespaces:      return store.namespaces.count
         case .storageclasses:  return store.storageClasses.count
-        case .overview, .graph, .events, .irsa, .linkerd, .lgtm: return nil
+        case .overview, .graph, .events, .irsa, .linkerd: return nil
         }
     }
 
@@ -251,7 +243,7 @@ struct ContentView: View {
                     .navigationDestination(for: AppRoute.self) { route in
                         switch route {
                         case .namespace(let r): NamespaceDetailView(name: r.name)
-                        case .pod(let r):       PodDetailView(route: r)
+                        case .pod(let r):       PodDetailView(route: r, context: store.context)
                         }
                     }
                     .toolbar {
@@ -299,11 +291,6 @@ struct ContentView: View {
         case .serviceaccounts: ServiceAccountsView(irsaOnly: false)
         case .irsa: ServiceAccountsView(irsaOnly: true)
         case .linkerd: LinkerdView()
-        // Keyed by context on purpose. `ContentView` keeps its identity when the
-        // selected cluster changes, so without this the @StateObject inside
-        // LgtmView is never rebuilt and the view goes on showing the previous
-        // cluster's report — or its error — under the new cluster's name.
-        case .lgtm: LgtmView(context: store.context).id(store.context)
         case .graph: NamespaceGraphRoot()
         }
     }
@@ -578,12 +565,4 @@ struct NamespacePicker: View {
         }
         .padding(.trailing, 8)
     }
-}
-
-/// Names the LGTM Helm charts give their workloads. Prefix-matched, because a
-/// release name sits in front (`lgtm-distributed-mimir-ingester`) and a target
-/// name behind it.
-private func isLgtm(_ name: String) -> Bool {
-    ["mimir", "loki", "tempo", "grafana", "pyroscope", "alloy", "cortex"]
-        .contains { name.contains($0) }
 }

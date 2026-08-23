@@ -10,7 +10,14 @@ final class PodEventsLoader: ObservableObject {
     @Published var events: [KubeEvent] = []
     @Published var loading = false
     @Published var error: String?
-    private let kubectl = KubectlService()
+    private let kubectl: KubectlService
+
+    /// Required, not optional - a `KubectlService` built with no context used
+    /// to run against whatever `kubectl config current-context` happened to
+    /// be, not the cluster this view is actually showing.
+    init(context: String) {
+        self.kubectl = KubectlService(context: context)
+    }
 
     func load(namespace: String, pod: String) async {
         loading = true
@@ -26,10 +33,21 @@ final class PodEventsLoader: ObservableObject {
 
 struct PodDetailView: View {
     let route: PodRoute
+    /// The cluster this route belongs to - not read from `store.context`,
+    /// because `@EnvironmentObject` isn't populated yet inside `init`, and
+    /// `eventsLoader` needs it there to build its `KubectlService` once. The
+    /// caller (`ContentView`) already has the right value in its own `store`.
+    let context: String
     @EnvironmentObject var store: ClusterStore
     @EnvironmentObject var emojis: EmojiStore
-    @StateObject private var eventsLoader = PodEventsLoader()
+    @StateObject private var eventsLoader: PodEventsLoader
     @State private var tab: PodDetailTab = .overview
+
+    init(route: PodRoute, context: String) {
+        self.route = route
+        self.context = context
+        _eventsLoader = StateObject(wrappedValue: PodEventsLoader(context: context))
+    }
 
     private var pod: Pod? {
         store.pods.first { $0.namespace == route.namespace && $0.name == route.name }
@@ -62,8 +80,8 @@ struct PodDetailView: View {
 
                     switch tab {
                     case .overview: overviewBody(for: pod)
-                    case .logs:     PodLogsView(route: route, containers: containerNames)
-                    case .describe: PodDescribeView(route: route)
+                    case .logs:     PodLogsView(route: route, containers: containerNames, context: context)
+                    case .describe: PodDescribeView(route: route, context: context)
                     }
                 }
             } else {
