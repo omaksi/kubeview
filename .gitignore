@@ -3,6 +3,7 @@
 Package.resolved
 build/
 Resources/AppIcon.iconset/
+Resources/LgtmView.iconset/
 *.dmg
 *.zip
 .DS_Store

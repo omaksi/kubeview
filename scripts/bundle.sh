@@ -16,9 +16,10 @@ Usage: ./scripts/bundle.sh [options] [release|debug]
   --app-name NAME     App display/bundle name        (default: KubeView)
   --bundle-id ID      CFBundleIdentifier              (default: com.omaksi.kubeview)
   --product NAME      SwiftPM executable product      (default: KubeView)
-  --icon PATH         .icns to embed into the bundle  (default: Resources/AppIcon.icns;
-                                                         regenerated via make_icon.swift
-                                                         if missing at the default path)
+  --icon PATH         .icns to embed into the bundle  (default: Resources/AppIcon.icns for
+                                                         KubeView, Resources/LgtmView.icns for
+                                                         LgtmView; regenerated via make_icon.swift
+                                                         if missing at that default path)
   --bin PATH          Use this pre-built binary instead of running `swift build`
                        (CI already produces a universal binary via lipo)
   --out DIR           Output directory for the .app   (default: build)
@@ -58,7 +59,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 OUT_DIR="${OUT_DIR:-$ROOT/build}"
-ICON="${ICON:-$ROOT/Resources/AppIcon.icns}"
+
+# Each known app has its own icon; an --app-name outside this pair still
+# defaults to AppIcon.icns (matching every version of this script before
+# there were two apps). --icon always wins when given.
+if [ -z "$ICON" ]; then
+  case "$APP_NAME" in
+    LgtmView) ICON="$ROOT/Resources/LgtmView.icns" ;;
+    *)        ICON="$ROOT/Resources/AppIcon.icns" ;;
+  esac
+fi
 
 if [ -z "$BIN_OVERRIDE" ]; then
   echo "Building $PRODUCT ($CONFIG)..."
@@ -82,15 +92,19 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BIN" "$CONTENTS/MacOS/$APP_NAME"
 chmod +x "$CONTENTS/MacOS/$APP_NAME"
 
-# Regenerate the default icon if missing. A custom --icon must already exist -
-# make_icon.swift only knows how to draw KubeView's own icon.
+# Regenerate a default icon if missing - but only a default; an explicit
+# --icon that's missing is always a hard error, never a silent fallback to
+# whatever icon happens to already be on disk (an early LgtmView build
+# bundled KubeView's icon this way, caught in review before it shipped).
 if [ ! -f "$ICON" ]; then
-  if [ "$ICON" = "$ROOT/Resources/AppIcon.icns" ]; then
-    "$ROOT/scripts/make_icon.swift"
-  else
-    echo "error: icon not found at $ICON" >&2
-    exit 1
-  fi
+  case "$ICON" in
+    "$ROOT/Resources/AppIcon.icns")  "$ROOT/scripts/make_icon.swift" kubeview ;;
+    "$ROOT/Resources/LgtmView.icns") "$ROOT/scripts/make_icon.swift" lgtmview ;;
+    *)
+      echo "error: icon not found at $ICON" >&2
+      exit 1
+      ;;
+  esac
 fi
 cp "$ICON" "$CONTENTS/Resources/AppIcon.icns"
 

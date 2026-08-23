@@ -1,11 +1,50 @@
 #!/usr/bin/env swift
-// Generates Resources/AppIcon.icns from SF Symbols + Core Graphics.
-// Coral→amber gradient squircle, white hexagon outline, binoculars glyph.
-// Usage: ./scripts/make_icon.swift (from repo root)
+// Generates an .icns for one of the two apps in this repo, from SF Symbols
+// + Core Graphics. Same squircle/hexagon frame for both, so they read as a
+// matched pair - only the gradient and glyph differ.
+//   kubeview (default): teal gradient, binoculars glyph  -> Resources/AppIcon.icns
+//   lgtmview:            amber gradient, gauge glyph      -> Resources/LgtmView.icns
+// Usage: ./scripts/make_icon.swift [kubeview|lgtmview]   (from repo root)
 
 import AppKit
 import CoreGraphics
 import Foundation
+
+struct IconProfile {
+    let outputName: String   // Resources/<outputName>.icns
+    let symbol: String       // SF Symbol name
+    let gradientStart: NSColor
+    let gradientEnd: NSColor
+}
+
+let profiles: [String: IconProfile] = [
+    // Cluster browser. Deep teal gradient: slate-teal top-left -> brighter
+    // teal bottom-right. Distinct from Lens (navy), k9s (green), and stock
+    // Kubernetes blue. outputName stays "AppIcon" - that's the name the
+    // bare `./scripts/bundle.sh` default has always expected.
+    "kubeview": IconProfile(
+        outputName: "AppIcon",
+        symbol: "binoculars.fill",
+        gradientStart: NSColor(red: 0.10, green: 0.24, blue: 0.32, alpha: 1.0),
+        gradientEnd:   NSColor(red: 0.22, green: 0.55, blue: 0.63, alpha: 1.0)
+    ),
+    // LGTM stack inspector. Amber/burnt-orange gradient - warm where
+    // KubeView is cool, and a gauge glyph reads as "headroom" at a glance,
+    // distinct from KubeView's binoculars even at menu-bar size.
+    "lgtmview": IconProfile(
+        outputName: "LgtmView",
+        symbol: "gauge.medium",
+        gradientStart: NSColor(red: 0.32, green: 0.14, blue: 0.05, alpha: 1.0),
+        gradientEnd:   NSColor(red: 0.95, green: 0.58, blue: 0.15, alpha: 1.0)
+    ),
+]
+
+let profileName = CommandLine.arguments.count > 1 ? CommandLine.arguments[1].lowercased() : "kubeview"
+guard let profile = profiles[profileName] else {
+    let known = profiles.keys.sorted().joined(separator: ", ")
+    FileHandle.standardError.write(Data("error: unknown icon profile '\(profileName)' - expected one of: \(known)\n".utf8))
+    exit(1)
+}
 
 let sizes: [(px: Int, name: String)] = [
     (16,  "icon_16x16.png"),
@@ -20,7 +59,7 @@ let sizes: [(px: Int, name: String)] = [
     (1024,"icon_512x512@2x.png"),
 ]
 
-func renderIcon(size: Int) -> NSImage {
+func renderIcon(size: Int, profile: IconProfile) -> NSImage {
     let s = CGFloat(size)
     let image = NSImage(size: NSSize(width: s, height: s))
     image.lockFocus()
@@ -34,10 +73,7 @@ func renderIcon(size: Int) -> NSImage {
                                 yRadius: s * 0.2237)
     squircle.addClip()
 
-    // Deep teal gradient: slate-teal top-left → brighter teal bottom-right.
-    // Distinct from Lens (navy), k9s (green), and stock Kubernetes blue.
-    let gradient = NSGradient(starting: NSColor(red: 0.10, green: 0.24, blue: 0.32, alpha: 1.0),
-                              ending:   NSColor(red: 0.22, green: 0.55, blue: 0.63, alpha: 1.0))!
+    let gradient = NSGradient(starting: profile.gradientStart, ending: profile.gradientEnd)!
     gradient.draw(in: rect, angle: 135)
 
     // Hexagon frame centered; flat top for a solid silhouette.
@@ -61,10 +97,10 @@ func renderIcon(size: Int) -> NSImage {
     hex.lineWidth = max(1, s * 0.025)
     hex.stroke()
 
-    // Binoculars symbol in white, sized to fit inside hexagon.
+    // Glyph symbol in white, sized to fit inside hexagon.
     let pt = s * 0.42
     let cfg = NSImage.SymbolConfiguration(pointSize: pt, weight: .semibold)
-    guard let raw = NSImage(systemSymbolName: "binoculars.fill",
+    guard let raw = NSImage(systemSymbolName: profile.symbol,
                             accessibilityDescription: nil)?
                        .withSymbolConfiguration(cfg)
     else { return image }
@@ -99,18 +135,18 @@ func writePNG(_ image: NSImage, to url: URL, pixels: Int) throws {
 let fm = FileManager.default
 let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
 let resources = cwd.appendingPathComponent("Resources")
-let iconset = resources.appendingPathComponent("AppIcon.iconset")
+let iconset = resources.appendingPathComponent("\(profile.outputName).iconset")
 try? fm.createDirectory(at: iconset, withIntermediateDirectories: true)
 
 for (px, name) in sizes {
-    let img = renderIcon(size: px)
+    let img = renderIcon(size: px, profile: profile)
     let out = iconset.appendingPathComponent(name)
     try writePNG(img, to: out, pixels: px)
     print("  \(name)  \(px)×\(px)")
 }
 
 // Run iconutil to produce .icns.
-let icns = resources.appendingPathComponent("AppIcon.icns")
+let icns = resources.appendingPathComponent("\(profile.outputName).icns")
 let task = Process()
 task.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 task.arguments = ["-c", "icns", "-o", icns.path, iconset.path]

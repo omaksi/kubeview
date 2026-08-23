@@ -25,10 +25,12 @@ jobs:
             product: KubeView
             bundle_id: com.omaksi.kubeview
             cask: kubeview
+            icon_profile: kubeview
           - app_name: LgtmView
             product: LgtmView
             bundle_id: com.omaksi.lgtmview
             cask: lgtm-view
+            icon_profile: lgtmview
     env:
       HAS_TAP_TOKEN: ${{ secrets.TAP_TOKEN != '' && 'true' || 'false' }}
       HAS_DEV_ID: ${{ secrets.DEV_ID_CERT_P12 != '' && 'true' || 'false' }}
@@ -62,7 +64,7 @@ jobs:
       - name: Generate app icon
         run: |
           mkdir -p Resources
-          ./scripts/make_icon.swift
+          ./scripts/make_icon.swift "${{ matrix.icon_profile }}"
 
       - name: Bundle .app
         run: |
