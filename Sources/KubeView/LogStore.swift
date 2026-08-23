@@ -1,20 +1,10 @@
 import Foundation
 import SwiftUI
 
-enum LogLevel: Int, Comparable, CaseIterable, Identifiable {
-    case debug, info, warn, error
-
-    var id: Int { rawValue }
-
-    var label: String {
-        switch self {
-        case .debug: return "Debug"
-        case .info:  return "Info"
-        case .warn:  return "Warn"
-        case .error: return "Error"
-        }
-    }
-
+/// `LogLevel`/`LogEntry` live in `Services/LogSink.swift` (Foundation-only).
+/// `.color` is SwiftUI, so it stays behind here rather than pulling SwiftUI
+/// into the I/O-side sink.
+extension LogLevel {
     var color: Color {
         switch self {
         case .debug: return .secondary
@@ -23,22 +13,16 @@ enum LogLevel: Int, Comparable, CaseIterable, Identifiable {
         case .error: return .red
         }
     }
-
-    static func < (lhs: LogLevel, rhs: LogLevel) -> Bool { lhs.rawValue < rhs.rawValue }
-}
-
-struct LogEntry: Identifiable, Hashable {
-    let id: UInt64
-    let date: Date
-    let level: LogLevel
-    let context: String?
-    let message: String
-    let detail: String?
 }
 
 /// In-memory ring buffer behind the Diagnostics view. Deliberately not written
 /// to disk: entries carry namespace and resource names, and a viewer app has no
 /// business leaving that on the filesystem unasked.
+///
+/// `LogSink` (Foundation-only, so `Subprocess` can call it without depending
+/// on SwiftUI) is a pure relay with no storage of its own - this class is
+/// where entries actually live, appended on the main actor as they arrive
+/// through `onAppend`.
 @MainActor
 final class LogStore: ObservableObject {
     static let shared = LogStore()
@@ -49,8 +33,17 @@ final class LogStore: ObservableObject {
     private let cap = 2000
     private let slack = 200
 
-    /// Callable from any isolation domain — `KubectlService` is an actor and
-    /// most call sites are off the main thread.
+    init() {
+        LogSink.onAppend = { [weak self] level, message, context, detail in
+            Task { @MainActor in
+                self?.append(level, message, context: context, detail: detail)
+            }
+        }
+    }
+
+    /// Callable from any isolation domain — most call sites (`ClusterStore`,
+    /// `AwsStore`) log directly; `Subprocess` logs via `LogSink` instead so it
+    /// stays Foundation-only, and its entries arrive here through `onAppend`.
     nonisolated static func record(_ level: LogLevel,
                                    _ message: String,
                                    context: String? = nil,

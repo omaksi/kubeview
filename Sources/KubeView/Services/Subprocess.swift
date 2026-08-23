@@ -52,14 +52,14 @@ enum Subprocess {
         process.environment = env
 
         do { try process.run() } catch {
-            LogStore.record(.error, "\(label) not executable", context: context, detail: binary)
+            LogSink.record(.error, "\(label) not executable", context: context, detail: binary)
             throw KubectlError.notFound
         }
 
         let watchdog = Task {
             try? await Task.sleep(nanoseconds: UInt64(timeout * 1.5 * 1_000_000_000))
             guard process.isRunning else { return }
-            LogStore.record(.warn, "killing hung \(label) after \(Int(timeout * 1.5))s",
+            LogSink.record(.warn, "killing hung \(label) after \(Int(timeout * 1.5))s",
                             context: context, detail: label)
             process.terminate()
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -86,11 +86,11 @@ enum Subprocess {
             let msg = killed
                 ? "timed out after \(Int(timeout * 1.5))s — cluster unreachable?"
                 : (stderrText.isEmpty ? "exit \(process.terminationStatus)" : stderrText)
-            LogStore.record(.error, "\(label) failed in \(ms)ms", context: context, detail: msg)
+            LogSink.record(.error, "\(label) failed in \(ms)ms", context: context, detail: msg)
             throw KubectlError.failed(msg)
         }
 
-        LogStore.record(.debug, "\(label) → \(data.count)B in \(ms)ms", context: context)
+        LogSink.record(.debug, "\(label) → \(data.count)B in \(ms)ms", context: context)
         return (data, stderrText)
     }
 }
