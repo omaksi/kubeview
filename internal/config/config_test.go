@@ -191,6 +191,29 @@ func TestBadPodMatchIsRejected(t *testing.T) {
 	}
 }
 
+// --window (and --step, --min-window) must accept the same "14d" shorthand
+// the config file does. flag.DurationVar only knows time.ParseDuration,
+// which rejects a day suffix outright — this is the flag-level regression
+// test for that gap; TestParseDuration below only covers the parser itself.
+func TestWindowFlagAcceptsDayUnits(t *testing.T) {
+	cases := []struct {
+		arg  string
+		want time.Duration
+	}{
+		{"1d", 24 * time.Hour},
+		{"7d", 7 * 24 * time.Hour},
+		{"14d", 14 * 24 * time.Hour},
+		{"30d", 30 * 24 * time.Hour},
+		{"48h", 48 * time.Hour}, // native Go syntax must still work
+	}
+	for _, tc := range cases {
+		got := parse(t, "", "--window", tc.arg).Window
+		if got != tc.want {
+			t.Errorf("--window %s → %v, want %v", tc.arg, got, tc.want)
+		}
+	}
+}
+
 func TestParseDuration(t *testing.T) {
 	cases := []struct {
 		in   string

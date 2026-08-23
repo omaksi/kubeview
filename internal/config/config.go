@@ -56,6 +56,21 @@ type Config struct {
 
 	PromURL    string
 	GrafanaURL string
+	// Match is appended to every PromQL selector, e.g. cluster="inno-shared-eks".
+	// A central store holding several clusters uses the same namespace and pod
+	// names in each, so without this max() silently spans them.
+	Match string
+
+	// Tenant is sent as X-Scope-OrgID. Needed only when talking straight to a
+	// multi-tenant Mimir; its gateway supplies a default.
+	Tenant string
+
+	// NoMetrics skips endpoint discovery and every PromQL query. Every
+	// component is still listed and classified from the Kubernetes API alone;
+	// only usage numbers and the findings derived from them are absent. It is
+	// a runtime mode rather than deployment shape, so — like Demo — it is
+	// flag-only and not settable from the config file.
+	NoMetrics bool
 
 	Window      time.Duration
 	Step        time.Duration
@@ -162,7 +177,7 @@ func Default() Config {
 		ConfigFile:   defaultConfigFile(),
 		Kinds:        append([]string(nil), DefaultKinds...),
 		PodMatch:     PodMatchKind,
-		PromURL:      "http://localhost:9090",
+		PromURL:      "",
 		Window:       14 * 24 * time.Hour,
 		Step:         time.Hour,
 		MinWindow:    6 * time.Hour,
@@ -254,12 +269,19 @@ func (c *Config) BindFlags(fs *flag.FlagSet) {
 	fs.Var((*podMatchValue)(&c.PodMatch), "pod-match",
 		"how to match a workload's pods in PromQL: kind (exact, uses k8s naming) or prefix (loose)")
 
-	fs.StringVar(&c.PromURL, "prom-url", c.PromURL, "Prometheus/Mimir query endpoint")
+	fs.StringVar(&c.PromURL, "prom-url", c.PromURL,
+		"Prometheus/Mimir query endpoint (default: discover one in the cluster)")
+	fs.StringVar(&c.Tenant, "tenant", c.Tenant, "Mimir tenant, sent as X-Scope-OrgID")
+	fs.StringVar(&c.Match, "match", c.Match,
+		`extra PromQL label matchers, e.g. cluster="inno-shared-eks"`)
 	fs.StringVar(&c.GrafanaURL, "grafana-url", c.GrafanaURL, "Grafana base URL, used by the 'g' key")
 
-	fs.DurationVar(&c.Window, "window", c.Window, "lookback window for usage analysis")
-	fs.DurationVar(&c.Step, "step", c.Step, "inner resolution of range queries")
-	fs.DurationVar(&c.MinWindow, "min-window", c.MinWindow, "shortest history that may produce a recommendation")
+	fs.BoolVar(&c.NoMetrics, "no-metrics", c.NoMetrics,
+		"skip endpoint discovery and every PromQL query; list and classify components only")
+
+	fs.Var((*durationValue)(&c.Window), "window", "lookback window for usage analysis, e.g. 14d, 24h")
+	fs.Var((*durationValue)(&c.Step), "step", "inner resolution of range queries")
+	fs.Var((*durationValue)(&c.MinWindow), "min-window", "shortest history that may produce a recommendation")
 
 	fs.BoolVar(&c.Demo, "demo", c.Demo, "run against synthetic data, no cluster or Prometheus needed")
 	fs.StringVar(&c.DemoTopology, "demo-topology", c.DemoTopology,

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // stringSlice is a repeatable, comma-splitting flag value.
@@ -59,4 +60,27 @@ func (p *podMatchValue) String() string {
 		return ""
 	}
 	return string(*p)
+}
+
+// durationValue is a flag.Value wrapping ParseDuration, so --window and its
+// siblings accept the same "14d" shorthand the config file already does.
+// flag.DurationVar only knows time.ParseDuration, which rejects a day suffix
+// outright — that gap is why `--window 1d` failed before a value ever
+// reached the engine, while the same string in the YAML file worked.
+type durationValue time.Duration
+
+func (d *durationValue) Set(v string) error {
+	parsed, err := ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	*d = durationValue(parsed)
+	return nil
+}
+
+func (d *durationValue) String() string {
+	if d == nil {
+		return "0s"
+	}
+	return time.Duration(*d).String()
 }
