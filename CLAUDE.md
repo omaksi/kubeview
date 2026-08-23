@@ -488,26 +488,90 @@ strip or tray menu, not by restarting.
 
 ## Release process
 
-Versioning: semver, tags are `vX.Y.Z`.
+Two apps ship from one tag. The Go analyser ships from its own.
+
+### The apps - tag `vX.Y.Z`
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.4.0 && git push origin v0.4.0
 ```
 
-The `release.yml` workflow on `macos-14`:
+`release.yml` fans out a **matrix over both apps** (`fail-fast: false`, so one
+app failing notarization does not cancel the other):
 
-1. Builds universal binary (`arm64` + `x86_64`, merged via `lipo`).
-2. Wraps into `KubeView.app` with `Info.plist` (version from tag).
-3. **Signs** — Developer ID when `DEV_ID_CERT_P12` is set, ad-hoc otherwise
-   (with a `::warning::`). See "Signing and notarization" below.
-4. Zips as `KubeView-vX.Y.Z.zip` via `ditto -c -k --sequesterRsrc --keepParent`.
-5. **Notarizes + staples** when signed with a Developer ID, then rebuilds the
-   zip so it carries the ticket.
-6. Checksums the final zip and creates a GitHub Release; the install snippet in
-   the notes includes `--no-quarantine` only on unnotarized builds.
-7. Clones `omaksi/homebrew-tap`, rewrites `Casks/kubeview.rb` with new
-   version + SHA, commits and pushes. Requires `TAP_TOKEN` secret (PAT with
-   `repo` scope on the tap repo).
+| | app | bundle id | cask |
+|---|---|---|---|
+| leg 1 | `KubeView` | `com.omaksi.kubeview` | `kubeview` |
+| leg 2 | `LgtmView` | `com.omaksi.lgtmview` | `lgtm-view` |
+
+Each leg builds a universal binary (`arm64` + `x86_64`, merged via `lipo`),
+bundles via `scripts/bundle.sh`, signs, notarizes, staples, zips as
+`<App>-vX.Y.Z.zip`, and uploads it as a workflow artifact.
+
+A second job, `release` (`needs: build`), then does the two things that touch a
+**shared** resource, serialized on purpose:
+
+1. One `gh release create` with both zips attached.
+2. One clone of `omaksi/homebrew-tap` that writes **both** cask files before a
+   **single** push.
+
+**Do not move the tap update back into the matrix.** Two parallel legs each
+cloning, committing and pushing to the same repo race on the push, and whichever
+lands second is rejected non-fast-forward. Fanning out the slow work and
+serializing only the shared write is the whole point of the two-job shape.
+
+`needs: build` also means a failed leg skips `release` entirely, so a half-built
+pair can never be half-published.
+
+### One bundler, not two
+
+`scripts/bundle.sh` is the single implementation, used by local dev builds and
+CI alike: `--app-name` / `--bundle-id` / `--product` / `--icon` / `--out` /
+`--version` / `--bin`. Each app resolves its own icon from `--app-name`, and
+`scripts/make_icon.swift` takes a profile argument (`kubeview` | `lgtmview`).
+
+This used to be implemented twice - `release.yml` hand-rolled its own bundle -
+and had drifted three ways, including two different bundle identifiers, which
+meant dev and release builds kept separate `UserDefaults`. If you find yourself
+writing bundling logic in a workflow, stop.
+
+### The analyser - tag `kubectl-lgtm-vX.Y.Z`
+
+```sh
+git tag kubectl-lgtm-v0.2.0 && git push origin kubectl-lgtm-v0.2.0
+```
+
+`release-lgtm.yml` runs the Go suite in `Tools/kubectl-lgtm` and cuts a GitHub
+release. It runs on `ubuntu-latest` - no codesigning involved - and **does not
+touch the Homebrew tap**.
+
+The namespaces are deliberately disjoint: `kubectl-lgtm-v*` never matches `v*`
+in either direction. Without that, tagging a Go-only fix would rebuild,
+codesign, notarize and staple **both** macOS apps and push both casks for zero
+app changes, and force lockstep versioning on three deliverables with no reason
+to share a cadence.
+
+### The formula is bumped by hand
+
+`Formula/kubectl-lgtm.rb` builds from source, so it needs only a tag and a
+sha256 - no artifacts. Nothing automates it, unlike the casks:
+
+```sh
+curl -sL https://github.com/omaksi/kubeview/archive/refs/tags/kubectl-lgtm-vX.Y.Z.tar.gz | shasum -a 256
+```
+
+then edit `url` + `sha256` in the tap and push.
+
+**Order matters.** `Casks/lgtm-view.rb` declares
+`depends_on formula: "omaksi/tap/kubectl-lgtm"`, so LgtmView is unusable from a
+clean install until the formula points at a release carrying `--json`. Release
+and bump the analyser **before** announcing the app.
+
+### CI
+
+`ci.yml` runs on every push and PR: `swift build`, `swift test`,
+`./scripts/check-sources.sh`, plus a separate `go` job for
+`Tools/kubectl-lgtm`.
 
 ### Workflow gotchas
 
