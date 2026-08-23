@@ -178,7 +178,7 @@ final class LgtmStore: ObservableObject {
 
 // MARK: - View
 
-struct LgtmView: View {
+struct LgtmRootView: View {
     @StateObject private var lgtm: LgtmStore
     @State private var tab: LgtmTab
 
