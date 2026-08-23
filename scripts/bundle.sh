@@ -21,6 +21,20 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BIN" "$CONTENTS/MacOS/KubeView"
 chmod +x "$CONTENTS/MacOS/KubeView"
 
+# The scaling analysis lives in a separate Go binary. Bundling it means a
+# released .app needs nothing installed; skipping it is fine too — the app
+# falls back to a Homebrew install and says so when neither is present.
+# ponytail: host arch only, matching the SPM binary above. Make both universal
+# together if the cask ever ships to Intel.
+LGTM_SRC="${LGTM_SRC:-$ROOT/../kubectl-lgtm}"
+if [ -d "$LGTM_SRC" ] && command -v go >/dev/null 2>&1; then
+  echo "Building kubectl-lgtm…"
+  (cd "$LGTM_SRC" && go build -o "$CONTENTS/MacOS/kubectl-lgtm" ./cmd/kubectl-lgtm)
+  chmod +x "$CONTENTS/MacOS/kubectl-lgtm"
+else
+  echo "Skipping kubectl-lgtm (no checkout at $LGTM_SRC, or no go toolchain)."
+fi
+
 # Regenerate the icon if missing, then copy into the bundle.
 if [ ! -f "$ROOT/Resources/AppIcon.icns" ]; then
   "$ROOT/scripts/make_icon.swift"

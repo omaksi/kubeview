@@ -8,7 +8,8 @@ struct DaemonSetsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [DaemonSet] {
-        store.daemonSets.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.daemonSets.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
@@ -60,7 +61,8 @@ struct ConfigMapsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [ConfigMap] {
-        store.configMaps.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.configMaps.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
@@ -169,7 +171,8 @@ struct HPAsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [HPA] {
-        store.hpas.searchFiltered(search) { [$0.name, $0.namespace, $0.targetName] }
+        store.hpas.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.targetName] }
     }
 
     var body: some View {
@@ -284,9 +287,10 @@ struct EventsView: View {
     }
 
     var filtered: [KubeEvent] {
-        guard !filter.isEmpty else { return loader.events }
+        let scoped = loader.events.inNamespace(store.namespaceFilter, \.namespace)
+        guard !filter.isEmpty else { return scoped }
         let q = filter.lowercased()
-        return loader.events.filter {
+        return scoped.filter {
             ($0.reason ?? "").lowercased().contains(q) ||
             ($0.message ?? "").lowercased().contains(q) ||
             ($0.involvedObject?.name ?? "").lowercased().contains(q) ||

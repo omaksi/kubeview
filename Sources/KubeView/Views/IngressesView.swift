@@ -25,7 +25,8 @@ struct IngressesView: View {
     @State private var mode: ViewMode = .cards
 
     var filteredIngresses: [Ingress] {
-        store.ingresses.searchFiltered(search) { ing in
+        store.ingresses.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { ing in
             [ing.name, ing.namespace] + ing.hosts + ing.paths.map(\.serviceName)
         }
     }

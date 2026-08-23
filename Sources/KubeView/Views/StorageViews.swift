@@ -6,7 +6,8 @@ struct PVCsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [PVC] {
-        store.pvcs.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.pvcs.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {

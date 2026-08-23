@@ -6,7 +6,8 @@ struct SecretsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [Secret] {
-        store.secrets.searchFiltered(search) { [$0.name, $0.namespace, $0.type ?? ""] }
+        store.secrets.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.type ?? ""] }
     }
 
     var body: some View {

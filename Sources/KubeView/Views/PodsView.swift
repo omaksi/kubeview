@@ -6,7 +6,8 @@ struct PodsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [Pod] {
-        store.pods.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.pods.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {

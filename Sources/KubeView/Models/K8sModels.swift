@@ -89,6 +89,17 @@ struct ObjectMeta: Decodable, Hashable {
     let creationTimestamp: String?
     let labels: [String: String]?
     let annotations: [String: String]?
+    /// Both come free with every `kubectl get -o json` the app already makes —
+    /// they were simply being dropped on decode. No extra call for the graph.
+    let uid: String?
+    let ownerReferences: [OwnerReference]?
+}
+
+struct OwnerReference: Decodable, Hashable {
+    let uid: String
+    let kind: String
+    let name: String
+    let controller: Bool?
 }
 
 struct PodSpec: Decodable, Hashable {
@@ -856,6 +867,7 @@ struct KubeEvent: Decodable, Identifiable, Hashable {
     let eventTime: String?
     let involvedObject: InvolvedObject?
     var id: String { "\(metadata.namespace ?? "-")/\(metadata.name)" }
+    var namespace: String { metadata.namespace ?? "default" }
     var when: String {
         let ts = lastTimestamp ?? firstTimestamp ?? eventTime ?? metadata.creationTimestamp ?? ""
         return ts.isEmpty ? "-" : Pod.formatAge(from: ts)

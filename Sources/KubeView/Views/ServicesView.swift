@@ -6,7 +6,8 @@ struct ServicesView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [Service] {
-        store.services.searchFiltered(search) { [$0.name, $0.namespace, $0.type] }
+        store.services.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.type] }
     }
 
     var body: some View {

@@ -10,51 +10,65 @@ struct GlobalSearchResultsView: View {
         store.namespaceSummaries.searchFiltered(search) { [$0.name] }
     }
     private var pods: [Pod] {
-        store.pods.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.pods.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var services: [Service] {
-        store.services.searchFiltered(search) { [$0.name, $0.namespace, $0.type] }
+        store.services.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.type] }
     }
     private var ingresses: [Ingress] {
-        store.ingresses.searchFiltered(search) { ing in
+        store.ingresses.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { ing in
             [ing.name, ing.namespace] + ing.hosts + ing.paths.map(\.serviceName)
         }
     }
     private var deployments: [Deployment] {
-        store.deployments.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.deployments.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var statefulSets: [StatefulSet] {
-        store.statefulSets.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.statefulSets.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var daemonSets: [DaemonSet] {
-        store.daemonSets.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.daemonSets.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var jobs: [KubeJob] {
-        store.jobs.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.jobs.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var cronJobs: [CronJob] {
-        store.cronJobs.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.cronJobs.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var configMaps: [ConfigMap] {
-        store.configMaps.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.configMaps.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var secrets: [Secret] {
-        store.secrets.searchFiltered(search) { [$0.name, $0.namespace, $0.type ?? ""] }
+        store.secrets.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.type ?? ""] }
     }
     private var pvcs: [PVC] {
-        store.pvcs.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.pvcs.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var storageClasses: [StorageClass] {
         store.storageClasses.searchFiltered(search) { [$0.name, $0.provisioner ?? ""] }
     }
     private var hpas: [HPA] {
-        store.hpas.searchFiltered(search) { [$0.name, $0.namespace, $0.targetName] }
+        store.hpas.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.targetName] }
     }
     private var networkPolicies: [NetworkPolicy] {
-        store.networkPolicies.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.networkPolicies.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
     private var serviceAccounts: [ServiceAccount] {
-        store.serviceAccounts.searchFiltered(search) { [$0.name, $0.namespace, $0.irsaRoleArn ?? ""] }
+        store.serviceAccounts.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace, $0.irsaRoleArn ?? ""] }
     }
     private var nodes: [Node] {
         store.nodes.searchFiltered(search) { [$0.name, $0.kubeletVersion, $0.os] }

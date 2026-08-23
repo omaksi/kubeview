@@ -44,9 +44,29 @@ struct AppearanceToggle: View {
 }
 
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            ClusterSettings()
+                .tabItem { Label("Clusters", systemImage: "square.stack.3d.up") }
+            AwsView()
+                .tabItem { Label("AWS", systemImage: "key.horizontal") }
+            DiagnosticsView()
+                .tabItem { Label("Diagnostics", systemImage: "ladybug") }
+            FeedbackSettings()
+                .tabItem { Label("Feedback", systemImage: "exclamationmark.bubble") }
+        }
+        // Wider and taller than a settings window wants to be, because AWS and
+        // Diagnostics are panes, not forms.
+        // ponytail: Diagnostics is a live log and really wants its own window
+        // you park beside the app. Promote it if tailing here feels cramped.
+        .frame(width: 720, height: 500)
+    }
+}
+
+private struct GeneralSettings: View {
     @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
-    @State private var token = ""
-    @State private var tokenSaved = false
 
     var body: some View {
         Form {
@@ -60,7 +80,58 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+    }
+}
 
+/// Names are a display layer over the kubeconfig, which is never rewritten.
+private struct ClusterSettings: View {
+    @EnvironmentObject var manager: ClusterManager
+    @EnvironmentObject var names: ClusterNameStore
+
+    var body: some View {
+        Form {
+            Section {
+                if manager.availableContexts.isEmpty {
+                    Text("No contexts in kubeconfig").foregroundStyle(.secondary)
+                }
+                ForEach(manager.availableContexts, id: \.self) { ctx in
+                    VStack(alignment: .leading, spacing: 2) {
+                        TextField(
+                            ClusterNameStore.shortened(ctx),
+                            text: Binding(get: { names.alias(for: ctx) },
+                                          set: { names.set($0, for: ctx) })
+                        )
+                        Text(ctx)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(ctx)
+                    }
+                    .padding(.vertical, 2)
+                }
+            } header: {
+                Text("Cluster names")
+            } footer: {
+                Text("Shown in the cluster bar and menu bar instead of the context name. "
+                     + "Clear a name to fall back to the context. Your kubeconfig is never "
+                     + "modified — kubectl still uses the real context name.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct FeedbackSettings: View {
+    @State private var token = ""
+    @State private var tokenSaved = false
+
+    var body: some View {
+        Form {
             Section {
                 SecureField("GitHub token", text: $token)
                 HStack {
@@ -96,8 +167,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize()
         .onAppear {
             // Show that a token exists without ever displaying it.
             tokenSaved = Keychain.get(Keychain.githubTokenAccount)?.isEmpty == false

@@ -2,19 +2,23 @@ import SwiftUI
 
 struct MenuBarContent: View {
     @EnvironmentObject var manager: ClusterManager
+    @EnvironmentObject var names: ClusterNameStore
+    @EnvironmentObject var tabs: TabStore
     @Environment(\.openWindow) private var openWindow
 
+    /// One row per tab, not per cluster: two tabs on the same cluster are two
+    /// places you work, and the menu bar is a list of those places.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            if manager.activeStores.isEmpty {
-                Text("No active clusters").font(.caption).foregroundStyle(.secondary).padding(10)
+            if tabs.tabs.isEmpty {
+                Text("No open tabs").font(.caption).foregroundStyle(.secondary).padding(10)
             } else {
-                ForEach(manager.activeOrder, id: \.self) { ctx in
-                    if let store = manager.stores[ctx] {
-                        ClusterSummaryRow(ctx: ctx, store: store,
-                                          isSelected: manager.selected == ctx)
+                ForEach(tabs.tabs) { tab in
+                    if let store = manager.stores[tab.context] {
+                        ClusterSummaryRow(ctx: tab.context, store: store,
+                                          isSelected: tab.id == tabs.activeID)
                     }
                 }
             }
@@ -36,7 +40,7 @@ struct MenuBarContent: View {
     }
 
     private var inactiveContexts: [String] {
-        manager.availableContexts.filter { !manager.activeOrder.contains($0) }
+        manager.availableContexts.filter { !tabs.openContexts.contains($0) }
     }
 
     @ViewBuilder
@@ -48,9 +52,13 @@ struct MenuBarContent: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
         } else {
-            Menu("Activate Cluster…") {
+            Menu("Open in New Tab…") {
                 ForEach(inactiveContexts, id: \.self) { ctx in
-                    Button(ctx) { manager.activate(ctx); manager.select(ctx) }
+                    Button(names.name(for: ctx)) {
+                        tabs.open(context: ctx)
+                        manager.applyCadence(openContexts: tabs.openContexts,
+                                             live: tabs.active?.context)
+                    }
                 }
             }
             .menuStyle(.borderlessButton)
@@ -101,9 +109,15 @@ struct MenuActionRow: View {
 
 struct ClusterSummaryRow: View {
     let ctx: String
+    @EnvironmentObject var names: ClusterNameStore
     @ObservedObject var store: ClusterStore
     let isSelected: Bool
     @EnvironmentObject var manager: ClusterManager
+    @EnvironmentObject var tabs: TabStore
+
+    private func sync() {
+        manager.applyCadence(openContexts: tabs.openContexts, live: tabs.active?.context)
+    }
 
     private var health: Color {
         if let fault = store.fault { return fault.color }
@@ -118,7 +132,7 @@ struct ClusterSummaryRow: View {
             Circle().fill(health).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(ctx).font(.callout.monospaced())
+                    Text(names.name(for: ctx)).font(.callout.monospaced())
                     if isSelected {
                         Image(systemName: "checkmark").font(.caption2).foregroundStyle(Color.accentColor)
                     }
@@ -138,14 +152,23 @@ struct ClusterSummaryRow: View {
             }
             Spacer()
             Button {
-                manager.deactivate(ctx)
+                if let tab = tabs.tabs.first(where: { $0.context == ctx }) {
+                    tabs.close(tab.id)
+                    sync()
+                }
             } label: {
                 Image(systemName: "xmark.circle.fill").font(.caption).foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .help("Close this tab")
         }
         .padding(10)
         .contentShape(Rectangle())
-        .onTapGesture { manager.select(ctx) }
+        .onTapGesture {
+            if let tab = tabs.tabs.first(where: { $0.context == ctx }) {
+                tabs.focus(tab.id)
+                sync()
+            }
+        }
     }
 }

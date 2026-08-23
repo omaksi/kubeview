@@ -10,7 +10,8 @@ struct DeploymentsView: View {
 
     var filtered: [Deployment] {
         let base = unhealthyOnly ? store.deployments.filter { !$0.isHealthy } : store.deployments
-        return base.searchFiltered(search) { [$0.name, $0.namespace] }
+        return base.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
@@ -75,7 +76,8 @@ struct StatefulSetsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [StatefulSet] {
-        store.statefulSets.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.statefulSets.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
@@ -128,7 +130,8 @@ struct ReplicaSetsView: View {
 
     var filtered: [ReplicaSet] {
         let base = hideScaledToZero ? store.replicaSets.filter { $0.desired > 0 } : store.replicaSets
-        return base.searchFiltered(search) { [$0.name, $0.namespace] }
+        return base.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
@@ -185,7 +188,8 @@ struct JobsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [KubeJob] {
-        store.jobs.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.jobs.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {
@@ -247,7 +251,8 @@ struct CronJobsView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [CronJob] {
-        store.cronJobs.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.cronJobs.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {

@@ -6,7 +6,8 @@ struct NetworkPoliciesView: View {
     @State private var mode: ViewMode = .cards
 
     var filtered: [NetworkPolicy] {
-        store.networkPolicies.searchFiltered(search) { [$0.name, $0.namespace] }
+        store.networkPolicies.inNamespace(store.namespaceFilter, \.namespace)
+            .searchFiltered(search) { [$0.name, $0.namespace] }
     }
 
     var body: some View {

@@ -105,7 +105,19 @@ final class ClusterStore: ObservableObject {
     @Published var metricsAvailable: Bool = true
     @Published var serverVersion: String?
     @Published var lastError: String?
+
+    /// The namespace the UI is scoped to, or nil for all namespaces. Per
+    /// context — each cluster remembers its own — and deliberately *not*
+    /// `kubectl config set-context --namespace`: that rewrites the user's
+    /// kubeconfig and follows them into every terminal, the same trap
+    /// `use-context` is.
+    @Published var namespaceFilter: String? {
+        didSet { UserDefaults.standard.set(namespaceFilter, forKey: Self.filterKey(context)) }
+    }
     @Published var lastRefresh: Date?
+    /// When the cheap reachability probe last ran. Separate from `lastRefresh`,
+    /// which only moves when resources are actually fetched.
+    @Published private(set) var lastProbe: Date?
 
     /// True only until the first refresh resolves either way. A failed first
     /// refresh leaves `lastRefresh` nil forever, so the error has to clear this
@@ -144,23 +156,126 @@ final class ClusterStore: ObservableObject {
     init(context: String) {
         self.context = context
         self.kubectl = KubectlService(context: context)
+        // Property observers don't fire during init, so reading the saved
+        // filter here can't immediately rewrite what it just read.
+        self.namespaceFilter = UserDefaults.standard.string(forKey: Self.filterKey(context))
+        #if DEBUG
+        Self.selfCheck()
+        #endif
     }
 
-    func start() {
-        stop()
+    static func filterKey(_ context: String) -> String { "kubeview.namespaceFilter.\(context)" }
+
+    /// Options for the namespace picker: this cluster's namespaces, plus the
+    /// current selection when the cluster doesn't have it — a filter restored
+    /// from a previous launch, or one whose namespace was deleted, has to stay
+    /// listed rather than silently reading as "All Namespaces".
+    static func pickerOptions(_ names: [String], selected: String?) -> [String] {
+        let sorted = names.sorted()
+        guard let selected, !sorted.contains(selected) else { return sorted }
+        return [selected] + sorted
+    }
+
+    #if DEBUG
+    static func selfCheck() {
+        struct Item { let namespace: String }
+        let items = [Item(namespace: "a"), Item(namespace: "b"), Item(namespace: "a")]
+        assert(items.inNamespace(nil, \.namespace).count == 3)      // nil = all namespaces
+        assert(items.inNamespace("a", \.namespace).count == 2)
+        assert(items.inNamespace("gone", \.namespace).isEmpty)
+        // Cluster-scoped kinds never route through the filter — they have no
+        // namespace to match against in the first place.
+        assert(ResourceRef.node("ip-10-0-0-1").namespace == nil)
+        assert(ResourceRef.pod("kube-system", "coredns").namespace == "kube-system")
+        assert(pickerOptions(["b", "a"], selected: nil) == ["a", "b"])
+        assert(pickerOptions(["b", "a"], selected: "a") == ["a", "b"])
+        assert(pickerOptions(["b", "a"], selected: "gone") == ["gone", "a", "b"])
+    }
+    #endif
+
+    /// How hard this store is working. Tabs drive it: the focused tab's cluster
+    /// runs `.live`, every other open tab's cluster runs `.background`, and a
+    /// cluster nobody has a tab on is `.idle`.
+    ///
+    /// The point is that traffic is flat in the number of tabs. Only one cluster
+    /// ever fans out into the ~18 parallel resource fetches; the rest cost one
+    /// `kubectl get --raw /version` a minute, which is enough to answer "is it
+    /// up, and are my credentials still good?" and nothing more.
+    enum Cadence: Equatable { case idle, background, live }
+
+    @Published private(set) var cadence: Cadence = .idle
+
+    /// True once *any* data has been fetched. Distinct from `isConnected`: a
+    /// background tab can be perfectly reachable while holding nothing to show.
+    var hasData: Bool { lastRefresh != nil }
+
+    private static let liveInterval: UInt64 = 5_000_000_000
+    /// Deliberately slow. This runs for every open-but-unfocused tab, so it is
+    /// the cost of *having* tabs — it has to stay negligible.
+    private static let probeInterval: UInt64 = 60_000_000_000
+
+    func goLive() {
+        guard cadence != .live else { return }
+        cancelTasks()
+        cadence = .live
+        LogStore.record(.debug, "cadence → live", context: context)
         fastTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await Task.sleep(nanoseconds: Self.liveInterval)
+            }
+        }
+    }
+
+    /// Probe-only. Existing data is left on screen — it just stops being
+    /// refreshed, which is why views show a "paused" marker rather than
+    /// pretending the numbers are current.
+    func goBackground() {
+        guard cadence != .background else { return }
+        cancelTasks()
+        cadence = .background
+        LogStore.record(.debug, "cadence → background", context: context)
+        fastTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.probe()
+                try? await Task.sleep(nanoseconds: Self.probeInterval)
             }
         }
     }
 
     func stop() {
+        cancelTasks()
+        cadence = .idle
+    }
+
+    private func cancelTasks() {
         fastTask?.cancel()
         slowTask?.cancel()
         fastTask = nil
         slowTask = nil
+    }
+
+    /// The cheap tier: one call, no resource lists, no fan-out. It runs the
+    /// kubeconfig's exec credential plugin, so a single request separates
+    /// "cluster is down" from "your token expired" — which is exactly the
+    /// distinction a tab's status dot has to make.
+    ///
+    /// ponytail: `/version` rather than `/readyz`. Both are one call, but
+    /// `/readyz` is restricted on some clusters and would report a permissions
+    /// problem as unreachability. `/version` is what `preflight()` has always
+    /// used here against real EKS clusters.
+    func probe() async {
+        do {
+            _ = try await kubectl.run(["get", "--raw", "/version"], timeout: 5)
+            fault = nil
+            lastError = nil
+            lastProbe = Date()
+        } catch {
+            let raw = error.localizedDescription
+            setFault(raw)
+            lastProbe = Date()
+            LogStore.record(.debug, "probe failed", context: context, detail: raw)
+        }
     }
 
     private func setActivity(_ text: String?) {
@@ -417,4 +532,21 @@ final class ClusterStore: ObservableObject {
     var clusterMemoryCapacityBytes: Double { nodes.reduce(0) { $0 + $1.memoryCapacityBytes } }
     var clusterCpuUsedMillicores: Double { nodeMetrics.reduce(0) { $0 + ResourceParser.cpuToMillicores($1.cpu) } }
     var clusterMemoryUsedBytes: Double { nodeMetrics.reduce(0) { $0 + ResourceParser.memoryToBytes($1.memory) } }
+}
+
+/// The namespace filter, applied the same way `searchFiltered` applies the
+/// search box: chained by each list view over the collection it renders.
+/// A nil filter means all namespaces. Cluster-scoped kinds (nodes, storage
+/// classes, the namespace list itself) have no namespace and never call this.
+///
+/// ponytail: applied per list view rather than centrally in `refresh()`. The
+/// cluster-wide surfaces stay cluster-wide on purpose — Overview's stats and
+/// namespace grid, the Namespaces list, and Linkerd's mesh coverage are all
+/// answers about the whole cluster, and scoping them to one namespace would
+/// make them lie.
+extension Collection {
+    func inNamespace(_ namespace: String?, _ key: KeyPath<Element, String>) -> [Element] {
+        guard let namespace else { return Array(self) }
+        return filter { $0[keyPath: key] == namespace }
+    }
 }

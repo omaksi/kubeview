@@ -16,6 +16,9 @@ struct NamespaceDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                // The graph moved to the Namespace section of the sidebar, where
+                // it gets the whole pane. Nested in this ScrollView it could only
+                // ever have a fixed height, which is what made it feel boxed in.
                 section(title: "Ingresses", kind: .ingress, count: ingresses.count) {
                     if ingresses.isEmpty { emptyState("No ingresses") }
                     else {

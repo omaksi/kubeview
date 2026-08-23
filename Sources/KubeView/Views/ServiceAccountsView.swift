@@ -7,7 +7,8 @@ struct ServiceAccountsView: View {
     @State private var mode: ViewMode = .cards
 
     var all: [ServiceAccount] {
-        irsaOnly ? store.serviceAccounts.filter { $0.irsaRoleArn != nil } : store.serviceAccounts
+        let base = irsaOnly ? store.serviceAccounts.filter { $0.irsaRoleArn != nil } : store.serviceAccounts
+        return base.inNamespace(store.namespaceFilter, \.namespace)
     }
 
     var filtered: [ServiceAccount] {

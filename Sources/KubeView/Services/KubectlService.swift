@@ -1,5 +1,8 @@
 import Foundation
 
+/// The error type for every external CLI the app runs, not just kubectl.
+/// Kept under this name because it predates the second tool and is referenced
+/// throughout the views.
 enum KubectlError: Error, LocalizedError {
     case notFound
     case failed(String)
@@ -19,28 +22,19 @@ actor KubectlService {
     let context: String?
 
     init(context: String? = nil) {
-        let candidates = [
+        self.binary = Subprocess.locate([
             "/opt/homebrew/bin/kubectl",
             "/usr/local/bin/kubectl",
             "/usr/bin/kubectl"
-        ]
-        self.binary = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "kubectl"
+        ]) ?? "kubectl"
         self.context = context
     }
 
-    /// Every kubectl invocation is bounded three ways, because each covers a
-    /// different hang:
-    ///
-    /// - null stdin — kubectl prompts for basic-auth credentials when a context
-    ///   has none, and a GUI app has nobody to answer. Turns a hang into an
-    ///   instant EOF failure.
-    /// - `--request-timeout` — bounds one API request. It is reliable for
-    ///   `get --raw` (measured 5.2s for a 5s setting against a black-holed IP)
-    ///   but NOT for `get <resource>`, which runs API discovery first: a 10s
-    ///   setting was still running past 15s. Never rely on it alone.
-    /// - the watchdog — the backstop that covers the discovery overrun above,
-    ///   and anything else kubectl does outside a single request. Verified
-    ///   killing a wedged `get pods` at timeout × 1.5.
+    /// `--request-timeout` bounds one API request. It is reliable for
+    /// `get --raw` (measured 5.2s for a 5s setting against a black-holed IP)
+    /// but NOT for `get <resource>`, which runs API discovery first: a 10s
+    /// setting was still running past 15s. `Subprocess.run`'s watchdog is what
+    /// actually covers that overrun.
     ///
     /// `nonisolated` on purpose: the previous version blocked inside the actor,
     /// so `refresh()`'s `async let` batch serialised and each call pinned a
@@ -53,64 +47,13 @@ actor KubectlService {
         if !args.contains(where: { $0.hasPrefix("--request-timeout") }) {
             args.append("--request-timeout=\(Int(timeout))s")
         }
-        let display = "kubectl " + args.joined(separator: " ")
-        let started = Date()
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = args
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = FileHandle.nullDevice
-
-        var env = ProcessInfo.processInfo.environment
-        // Ensure PATH includes Homebrew for exec auth plugins (aws, gke-gcloud-auth-plugin, etc.)
-        let extra = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        env["PATH"] = env["PATH"].map { "\($0):\(extra)" } ?? extra
-        process.environment = env
-
-        do { try process.run() } catch {
-            LogStore.record(.error, "kubectl not executable", context: context, detail: binary)
-            throw KubectlError.notFound
-        }
-
-        let watchdog = Task {
-            try? await Task.sleep(nanoseconds: UInt64(timeout * 1.5 * 1_000_000_000))
-            guard process.isRunning else { return }
-            LogStore.record(.warn, "killing hung kubectl after \(Int(timeout * 1.5))s",
-                            context: context, detail: display)
-            process.terminate()
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        }
-        defer { watchdog.cancel() }
-
-        // readToEnd/waitUntilExit block; keep them off the cooperative pool.
-        let (data, errData) = await withCheckedContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let out = (try? stdout.fileHandleForReading.readToEnd()) ?? Data()
-                let err = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
-                process.waitUntilExit()
-                cont.resume(returning: (out, err))
-            }
-        }
-
-        let ms = Int(Date().timeIntervalSince(started) * 1000)
-        guard process.terminationStatus == 0 else {
-            let stderrText = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let killed = process.terminationReason == .uncaughtSignal
-            let msg = killed
-                ? "timed out after \(Int(timeout * 1.5))s — cluster unreachable?"
-                : (stderrText.isEmpty ? "exit \(process.terminationStatus)" : stderrText)
-            LogStore.record(.error, "\(display) failed in \(ms)ms", context: context, detail: msg)
-            throw KubectlError.failed(msg)
-        }
-        LogStore.record(.debug, "\(display) → \(data.count)B in \(ms)ms", context: context)
-        return data
+        return try await Subprocess.run(
+            binary: binary,
+            args: args,
+            timeout: timeout,
+            label: "kubectl " + args.joined(separator: " "),
+            context: context
+        ).stdout
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
