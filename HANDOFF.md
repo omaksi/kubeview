@@ -100,59 +100,72 @@ not asserted.
 
 ---
 
-## What is left, in order
+## What is left
 
-1. **Push both repos.** See the blocker above.
-2. **Tag `kubectl-lgtm-v0.2.0`** - `release-lgtm.yml` runs the Go suite and cuts
-   the release. This is the one that matters: `Casks/lgtm-view.rb` declares
-   `depends_on formula: "omaksi/tap/kubectl-lgtm"`, and the published `v0.1.0`
-   (Aug 7) predates `--json` entirely, so **LgtmView is unusable from a clean
-   install until this exists.**
-3. **Bump `Formula/kubectl-lgtm.rb`** in `omaksi/homebrew-tap` by hand - nothing
-   automates it. It builds from source, so it needs only the new tag and
-   `curl -sL <tarball> | shasum -a 256`. The tarball is the whole monorepo at
-   that tag; wrap `install` in `cd "Tools/kubectl-lgtm" do ... end`.
-4. **Verify `brew install` end to end from clean** - `brew untap omaksi/tap`,
-   re-tap, install the formula, then `brew install --cask lgtm-view` and confirm
-   the dependency resolves.
-5. **Push the Go repo's 7 commits, add a "moved to" pointer to its README, then
-   archive `omaksi/kubectl-lgtm`.** In that order - an archived repo is fully
-   read-only, so a bad formula afterwards means unarchiving.
-6. **Remove the stale worktree** (`~/GitHub/kubeview-lgtm`, branch `lgtm-view`).
-   Verified safe: every file in it is a strict subset of `main` and the branch is
-   already merged. The permission classifier denied this in-session:
-   `git -C ~/GitHub/kubeview worktree remove --force ~/GitHub/kubeview-lgtm && git -C ~/GitHub/kubeview branch -D lgtm-view`
+Everything from the original plan shipped on 2026-08-24. `v0.4.0` and
+`kubectl-lgtm-v0.2.0` are released, all three Homebrew packages are published
+and were installed from a clean tap and verified.
 
-**Unverified and worth checking before tagging:** whether `TAP_TOKEN` and
-`DEV_ID_CERT_P12` are actually set on `omaksi/kubeview`. `gh` is not installed,
-so nobody could confirm it. If absent, signing and the tap update skip or fail.
+**Only two things remain:**
+
+1. **Archive `omaksi/kubectl-lgtm`.** Its history is pushed and the README
+   carries a moved-to notice. Do it last - an archived repo is fully read-only:
+   ```sh
+   curl -s -X PATCH -H "Authorization: Bearer <PAT>" \
+     -d '{"archived":true}' https://api.github.com/repos/omaksi/kubectl-lgtm
+   ```
+2. **Clean up 31 repos under `~/GitLab/`** that carry a GitLab token in
+   plaintext in `.git/config`. Same pattern as the GitHub one, different token.
+   Verify against a PRIVATE repo before stripping any URL - see the credentials
+   section above for why that check is the whole ballgame.
+
+Also worth doing: **revoke the old GitHub PAT**. It sat in plaintext in three
+config files for months and is now unreadable everywhere, so it is pure
+liability.
+
+### Branch `lgtm-view` - do not delete casually
+
+The stale worktree is gone, but its branch is not, and it is **not** redundant.
+It held **2183 lines of uncommitted work** that never reached `main`, including
+a by-product rollup (`ProductRow`, `productRollupSection`, `orderedComponents`,
+`componentsSection`, `avgCpuUsed`, `avgMemUsed`, `podsExpanded`) that exists
+nowhere in the current tree. That work is now committed at `a4bae00`.
+
+The earlier claim that "every file in it is a strict subset of main" was WRONG.
 
 ---
 
+Verify by symbol, not by assertion, before dropping this branch.
 ## Verification state
 
-Everything below was run, not reasoned about:
+Everything below was run, not reasoned about.
 
-- Both apps build; `swift build --product LgtmView` succeeds.
-- `scripts/bundle.sh --app-name LgtmView --bundle-id com.omaksi.lgtmview` produces
-  a real `LgtmView.app` with the right identifier and an arm64 Mach-O.
-- The two apps have **visually distinct icons** (teal binoculars / amber gauge),
-  and KubeView's regenerated icon is SHA256-identical to the committed one.
-- `LgtmView.app` **launches**, runs without crashing, produces no diagnostic
-  report, resolves the analyser, invokes it, and renders the correct degrade
-  state when it is missing.
-- All ten `selfCheck()` functions pass - the first time they have ever run
-  outside a human opening a debug build.
+**Release, 2026-08-24:**
+
+- `brew untap` the dead `omaksi/kubeview` tap, `brew tap omaksi/tap`,
+  `brew install --cask lgtm-view` -> the cask pulled `kubectl-lgtm` 0.2.0 as a
+  dependency, built it from the monorepo subdirectory in 24s, installed the app.
+- `brew test kubectl-lgtm` exits 0.
+- Both apps codesign as `Developer ID Application: Ondrej Maksi (PBA5LU9288)`,
+  `spctl` reports `source=Notarized Developer ID`, Gatekeeper accepts both.
+- Bundle identifiers correct: `com.omaksi.kubeview`, `com.omaksi.lgtmview`.
+- The formula's `install` and `test` blocks were simulated against the real tag
+  tarball before publishing: builds from `Tools/kubectl-lgtm`, `--version`
+  prints `kubectl-lgtm 0.2.0`, the no-kubeconfig path exits **1** with a
+  `kubectl-lgtm:` prefix - both assertions the `test do` block makes.
+
+**Two taps existed.** `omaksi/homebrew-kubeview` was deprecated on 2026-08-07
+and holds only a README; the live one is `omaksi/homebrew-tap` (`omaksi/tap`).
+A stale `kubeview` 0.2.2 was still installed from the dead tap.
+
+**Homebrew 6+ requires `brew trust omaksi/tap`** before it will load a
+third-party cask. Install fails outright without it. Documented in the README.
 
 **Not verified: a real report rendering against a live cluster.** The AWS SSO
-token is expired (`aws sso login` to fix). The analyser was run exactly as the
-app runs it and returned a clean error, so the failure path is proven; the
-success path is not.
-
-`kubectl-lgtm` was built from `Tools/` and installed to `~/go/bin/` so the app
-could find it. Remove it if unwanted.
-
+token is expired (`aws sso login` to fix). The analyser's failure path is
 ---
+
+proven; the success path is not.
 
 ## Standing rules
 
