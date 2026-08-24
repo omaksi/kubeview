@@ -165,8 +165,8 @@ third-party cask. Install fails outright without it. Documented in the README.
 token is expired (`aws sso login` to fix). The analyser's failure path is
 proven; the success path is not.
 
-
 ---
+
 ## Standing rules
 
 - **Commit periodically without asking.** Push, tag and release need Ondrej's
