@@ -2,9 +2,9 @@
 
 ## CURRENT STATE (read this first)
 
-**Date:** 2026-08-23
-**The split is done. Everything is green. Nothing is pushed, and that is the only
-thing blocking.**
+**Date:** 2026-08-24
+**The split is done, pushed and released. Credentials are fixed. What remains is
+tap and archival housekeeping.**
 
 | Check | Result |
 |---|---|
@@ -12,48 +12,55 @@ thing blocking.**
 | `swift test` | 56 tests, 0 failures |
 | `go test ./...` (Tools/kubectl-lgtm) | 6 packages ok |
 | `./scripts/check-sources.sh` | OK |
+| CI on `main` | green, on macos-26 |
 | working tree | clean |
 
-- `~/GitHub/kubeview` HEAD `2c8bdfe`, **34 commits unpushed**
-- `~/GitHub/kubectl-lgtm` HEAD `4b6c5c2`, **7 commits unpushed**
-
-Both are clean fast-forwards. Ondrej has **authorised the push**; it fails for a
-credential reason, not a permission one.
+- `~/GitHub/kubeview` HEAD `4c01d86`, pushed. Tags `v0.4.0` and
+  `kubectl-lgtm-v0.2.0` pushed, both on that commit.
+- `~/GitHub/kubectl-lgtm` HEAD `933043b`, pushed, archive notice in README.
 
 **The design lives here:** https://claude.ai/code/artifact/4f483667-6f3e-4359-a06e-a769ede5e7e8
 
 ---
 
-## THE BLOCKER: no GitHub credentials on this machine
+## CREDENTIALS - solved, do not redo
 
-Verified, all of them:
+The GitHub PAT lives in the macOS **login keychain** as an **internet password**
+(`https://github.com`, account `omaksi`). Git's `osxkeychain` helper reads it.
+No token sits in any `.git/config` any more.
 
-```
-SSH to GitHub   Permission denied (publickey)   (~/.ssh/id_ed25519 is GitLab-only)
-gh CLI          not installed
-keychain        nothing stored for github.com
-~/.netrc        absent
-GH_TOKEN        not in env
-```
+Two traps worth keeping:
 
-A global `url.https://github.com/.insteadOf git@github.com:` rewrite (from
-`~/.claude/CLAUDE.md`, added so `/plugin install` works) forces every GitHub
-remote to HTTPS, so SSH cannot be used even if a key were authorised.
+- **`git ls-remote` against a PUBLIC repo proves nothing about auth** - it needs
+  no credentials at all. Verify against a PRIVATE repo (`inno-writing`) or the
+  check is vacuous. This cost the original token: three `.git/config` URLs were
+  stripped on the strength of a check that could not fail, and the PAT existed
+  nowhere else. No shell history, no snapshots, no Time Machine.
+- **Keychain Access's "New Password Item" creates a GENERIC password**, which
+  git never looks at. Naming the item with a full URL (`https://github.com`)
+  makes it an INTERNET password instead, which is what the helper searches.
+  Confirm via the item's "Kind" field.
 
-**Neither the agent's Bash tool nor the `!` prefix has a TTY**, so git cannot
-prompt for a username in either. Confirmed by trying both. The resolutions are:
+**Still outstanding:** 31 repos under `~/GitLab/` carry a GitLab token in
+plaintext in `.git/config`. Same pattern, different token, not yet cleaned up.
 
-1. **Store a PAT once** (non-interactive, unblocks everything afterwards):
-   ```sh
-   printf 'protocol=https\nhost=github.com\nusername=omaksi\npassword=<PAT>\n\n' \
-     | git credential-osxkeychain store
-   ```
-   Needs `repo` scope to cover both repos. Then `git push origin main` works
-   from anywhere, including an agent session.
-2. **Or push from a real Terminal window** outside Claude Code, where git can
-   prompt.
+---
 
-Do not suggest embedding a token in the remote URL - it lands in `.git/config`.
+## IDENTITY - personal vs work
+
+`~/.gitconfig` now defaults to `ondrej.maksi@gmail.com`, with
+`includeIf "gitdir:~/GitLab/"` pointing at `~/.gitconfig-work` for the
+Innovatrics address. Verified resolving correctly on both sides.
+
+All four GitHub repos were rewritten to gmail (kubeview 55, kubectl-lgtm 10,
+writing 8, inno-writing 47). Zero work-email commits remain on any remote, and
+kubeview's six `v*` tags kept their original SHAs.
+
+**Trap:** `writing` was first rewritten against a STALE remote-tracking ref, and
+the queued force-push would have destroyed 5 unfetched commits. **Always
+`git fetch` before rewriting history**, and inspect `main..origin/main` before
+any force-push. Pre-rewrite bundles of all four repos are in the session
+scratchpad, plus `refs/original/` in each repo.
 
 ---
 

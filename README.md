@@ -1,8 +1,9 @@
 # KubeView
 
-Native macOS desktop app for viewing Kubernetes clusters across multiple contexts.
+Native macOS desktop apps for Kubernetes: **KubeView**, a multi-context cluster
+browser, and **LgtmView**, an inspector for a Grafana LGTM stack.
 
-![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue) ![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange) ![License: MIT](https://img.shields.io/badge/License-MIT-green)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue) ![Swift 6.3+](https://img.shields.io/badge/Swift-6.3%2B-orange) ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
 ## Install
 
@@ -29,6 +30,23 @@ Upgrade to the latest release:
 ```sh
 brew update && brew upgrade --cask kubeview
 ```
+
+### LgtmView
+
+This repo ships a second, separate app: **LgtmView**, a focused inspector for a
+Grafana LGTM stack (Loki, Grafana, Tempo, Mimir) running in a cluster.
+
+```sh
+brew tap omaksi/tap
+brew trust omaksi/tap
+brew install --cask lgtm-view
+open -a LgtmView
+```
+
+LgtmView shells out to the `kubectl-lgtm` CLI rather than embedding it, so the
+cask pulls in `omaksi/tap/kubectl-lgtm` as a dependency automatically. The two
+apps share no state and no UI - installing or removing one does not affect the
+other.
 
 ### Direct download
 
@@ -87,11 +105,21 @@ brew untap omaksi/tap
 
 ## Build from source
 
+Builds two apps from one package. `swift build` alone builds both; bundling is
+per app:
+
 ```sh
 swift build -c release
-./scripts/bundle.sh release
-open build/KubeView.app
+
+./scripts/bundle.sh release                       # -> build/KubeView.app
+./scripts/bundle.sh --app-name LgtmView \
+                    --bundle-id com.omaksi.lgtmview release   # -> build/LgtmView.app
 ```
+
+Needs **Xcode 26 / Swift 6.3 or newer**. `Package.swift` still declares
+`swift-tools-version: 5.9`, but that is the manifest format, not the compiler
+requirement - the source does not build on Swift 5.10. CI runs on `macos-26`
+for this reason.
 
 Swift Package Manager executable; opens straight in Xcode too:
 
