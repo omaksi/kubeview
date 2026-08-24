@@ -163,10 +163,10 @@ third-party cask. Install fails outright without it. Documented in the README.
 
 **Not verified: a real report rendering against a live cluster.** The AWS SSO
 token is expired (`aws sso login` to fix). The analyser's failure path is
----
-
 proven; the success path is not.
 
+
+---
 ## Standing rules
 
 - **Commit periodically without asking.** Push, tag and release need Ondrej's
