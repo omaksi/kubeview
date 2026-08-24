@@ -573,6 +573,20 @@ and bump the analyser **before** announcing the app.
 `./scripts/check-sources.sh`, plus a separate `go` job for
 `Tools/kubectl-lgtm`.
 
+**Both Swift jobs run on `macos-26`** (Xcode 26.6, Swift 6.3). They previously
+pinned `Xcode_15.4.app` on `macos-14`, which built the pre-split code fine as
+recently as `v0.3.0` but cannot build the six-module layout. `ci.yml` was added
+by the split and inherited that pin, so it went red on its first ever run.
+
+The deployment target comes from `platforms: [.macOS(.v14)]` in `Package.swift`,
+**not** from the build toolchain - a newer Xcode still ships a macOS 14 binary.
+Do not re-pin an old Xcode to "match" the deployment target; they are unrelated.
+
+The old step was `sudo xcode-select -s /Applications/Xcode_15.4.app || true`.
+That `|| true` means a missing or renamed Xcode never fails the step - it
+silently falls back to the runner default, so the job builds with a toolchain
+nobody chose. If a version pin is ever needed again, let it fail loudly.
+
 ### Workflow gotchas
 
 - **`secrets` context is NOT usable in step-level `if:` conditions.** Map to a
