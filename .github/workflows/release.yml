@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-26
     strategy:
       # fail-fast: false so a notarization hiccup on one app doesn't cancel
       # the other mid-flight - they're independent artifacts of one tag.
@@ -47,9 +47,6 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
 
       - name: Build universal binary
         run: |
