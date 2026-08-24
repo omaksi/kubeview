@@ -27,12 +27,17 @@ Changes go through your normal GitOps review: read a finding, press `y`, paste i
 brew install omaksi/tap/kubectl-lgtm
 ```
 
-Or from source:
+Or from source, from a clone of this monorepo:
 
 ```
-go install github.com/omaksi/kubectl-lgtm/cmd/kubectl-lgtm@latest
+cd Tools/kubectl-lgtm
 make install       # go install into $GOPATH/bin
 ```
+
+`go install github.com/omaksi/kubectl-lgtm/...@latest` does **not** work any
+more. That module path still resolves to the standalone repo, which is archived
+and frozen before `--json` - the command succeeds and silently installs the old
+binary. Use Homebrew, or build from a clone as above.
 
 Named `kubectl-lgtm`, so anywhere on `$PATH` it is also invocable as `kubectl lgtm`.
 
