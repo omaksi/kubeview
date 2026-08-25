@@ -15,9 +15,9 @@ import KubeUI
 ///
 /// Two things this face can show that the metrics-history face (LgtmMetricsView)
 /// cannot: a per-pod breakdown (the analyser only aggregates per component, so a
-/// skewed set of replicas is invisible there) and a live per-product data-flow
+/// skewed set of replicas is invisible there) and a live whole-stack data-flow
 /// graph (`LgtmGraphView`, fed with nodes built from live pod/deployment state
-/// here — see `graphNodes(for:rows:report:)`).
+/// here — see `graphNodes(rows:report:podMetricsByID:)`).
 ///
 /// This tab and Metrics are the ground-truth pair: the most accurate map of
 /// what the cluster IS and what was measured, with no simplification and no
@@ -81,17 +81,17 @@ struct LgtmClusterView: View {
                                 if !trouble.isEmpty {
                                     troubleSection(trouble)
                                 }
+                                // The flow graph needs real classification (product/role,
+                                // request/limit ceilings) to mean anything - it stays off
+                                // until `report` lands, same as the "still running" banner
+                                // above already communicates.
+                                if let report {
+                                    graphSection(rows: rows, report: report,
+                                                 proxy: proxy, podMetricsByID: metricsByPodKey)
+                                }
                                 ForEach(productOrder(rows), id: \.self) { product in
-                                    let productRows = rows.filter { $0.product == product }
-                                    // The flow graph needs real classification (product/role,
-                                    // request/limit ceilings) to mean anything - it stays off
-                                    // until `report` lands, same as the "still running" banner
-                                    // above already communicates.
-                                    if let report {
-                                        graphSection(product: product, rows: productRows, report: report,
-                                                     proxy: proxy, podMetricsByID: metricsByPodKey)
-                                    }
-                                    productSection(product: product, rows: productRows,
+                                    productSection(product: product,
+                                                   rows: rows.filter { $0.product == product },
                                                    podMetricsByID: metricsByPodKey)
                                 }
                                 nodePlacementSection(rows)
@@ -329,13 +329,17 @@ struct LgtmClusterView: View {
 
     // MARK: - Data-flow graph
 
-    private func graphSection(product: String, rows: [LgtmClusterComponentRow], report: LgtmReport,
+    /// ONE graph for the whole stack, above the per-product sections rather
+    /// than one inside each of them. The interesting edges are the ones that
+    /// leave a product - Alloy into all three distributors, Grafana out of
+    /// all three query-frontends - and five separate pictures could only ever
+    /// draw each of those twice, as a stub at each end.
+    private func graphSection(rows: [LgtmClusterComponentRow], report: LgtmReport,
                                proxy: ScrollViewProxy, podMetricsByID: [String: PodMetrics]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "\(product.capitalized) - Data Flow", trailing: nil)
-            LgtmGraphView(product: product,
-                          nodes: graphNodes(for: product, rows: rows, report: report, podMetricsByID: podMetricsByID),
-                          edges: LgtmTopology.edges(for: product)) { id in
+            SectionHeader(title: "Data Flow", trailing: nil)
+            LgtmGraphView(nodes: graphNodes(rows: rows, report: report, podMetricsByID: podMetricsByID),
+                          edges: LgtmTopology.allEdges) { id in
                 handleGraphSelect(id, rows: rows, proxy: proxy)
             }
         }
@@ -349,25 +353,25 @@ struct LgtmClusterView: View {
         withAnimation { proxy.scrollTo(row.id, anchor: .top) }
     }
 
-    /// Builds the node set for one product's flow graph from live state:
-    /// every role the topology expects (from the edge endpoints - the
-    /// topology exposes no other way to enumerate a product's roles), unioned
-    /// with every component this cluster actually has classified under that
-    /// product, so a real workload the topology doesn't know about still
-    /// renders (as a standalone-lane node) instead of silently disappearing.
-    private func graphNodes(for product: String, rows: [LgtmClusterComponentRow], report: LgtmReport,
+    /// Builds the node set for the whole stack's flow graph from live state:
+    /// every role the merged topology expects (from the edge endpoints - the
+    /// topology exposes no other way to enumerate its roles), unioned with
+    /// every component this cluster actually has classified, so a real
+    /// workload the topology doesn't know about still renders (as a
+    /// standalone-lane node) instead of silently disappearing.
+    private func graphNodes(rows: [LgtmClusterComponentRow], report: LgtmReport,
                              podMetricsByID: [String: PodMetrics]) -> [LgtmGraphNode] {
-        let rowsByComponentID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
-        let actual = Dictionary(uniqueKeysWithValues: report.components.filter { $0.product == product }
-            .map { ($0.title, $0) })
-        let expected = Set(LgtmTopology.edges(for: product).flatMap { [$0.from, $0.to] })
+        let rowsByComponentID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let actual = Dictionary(report.components.map { ($0.title, $0) }, uniquingKeysWith: { first, _ in first })
+        let expected = Set(LgtmTopology.allEdges.flatMap { [$0.from, $0.to] })
 
         return expected.union(actual.keys).sorted().map { title in
             guard let component = actual[title] else {
                 // The topology expects this role but the cluster has no such
                 // workload - a gap in the data path, worth showing as-is.
+                let product = LgtmTopology.product(forNodeID: title)
                 let role = title.split(separator: "/", maxSplits: 1).last.map(String.init) ?? title
-                return LgtmGraphNode(id: title, label: role.capitalized, detail: "not present",
+                return LgtmGraphNode(id: title, product: product, label: role.capitalized, detail: "not present",
                                       lane: LgtmTopology.lane(product: product, role: role),
                                       level: .unknown, saturation: nil, present: false)
             }
@@ -405,11 +409,16 @@ struct LgtmClusterView: View {
                 : []
             let satPair = LgtmClusterJoin.typicalAndPeakSaturation(perPodSaturation)
             return LgtmGraphNode(
-                id: title, label: component.role.capitalized,
+                id: title, product: component.product,
+                // Alloy's and Grafana's components report an empty role (see
+                // `LgtmTopology.edges(for:)`), so a role-only label leaves
+                // those chips blank - the title is the workload name there.
+                label: component.role.isEmpty ? component.title : component.role.capitalized,
                 detail: LgtmClusterJoin.graphDetail(pods: pods, ready: ready, desired: desired),
-                lane: LgtmTopology.lane(product: product, role: component.role),
+                lane: LgtmTopology.lane(product: component.product, role: component.role),
                 level: LgtmClusterJoin.graphLevel(pods: pods, ready: ready, desired: desired),
-                saturation: satPair?.typical, peakReplicaSaturation: satPair?.peak, present: true)
+                saturation: satPair?.typical, peakReplicaSaturation: satPair?.peak, present: true,
+                pods: pods.map { LgtmPodMark(name: $0.name, level: LgtmClusterJoin.podLevel($0)) })
         }
     }
 
@@ -527,6 +536,16 @@ enum LgtmClusterJoin {
         if pods.contains(where: { podIsOOMKilled($0) }) { return .critical }
         if ready < desired { return .warn }
         if pods.contains(where: { $0.restarts > 0 }) { return .warn }
+        return .ok
+    }
+
+    /// One pod's own state, for the graph's per-pod marks. Same vocabulary
+    /// and the same rule as `graphLevel`: only things that have actually
+    /// happened (a failing container state, an OOM kill, a pod stuck
+    /// Pending, a restart), never a saturation cutoff.
+    static func podLevel(_ pod: Pod) -> LgtmNodeLevel {
+        if pod.isFailing || podIsOOMKilled(pod) { return .critical }
+        if pod.phase == "Pending" || pod.restarts > 0 { return .warn }
         return .ok
     }
 
@@ -936,6 +955,14 @@ enum LgtmClusterViewSelfCheck {
         assert(LgtmClusterJoin.graphLevel(pods: [oomed, healthy, healthy], ready: 3, desired: 3) == .critical)    // fully ready but one OOMKilled
         assert(LgtmClusterJoin.graphLevel(pods: [flapping, healthy, healthy], ready: 3, desired: 3) == .warn)     // fully ready, still churning restarts
         assert(LgtmClusterJoin.graphLevel(pods: [healthy, healthy, healthy], ready: 3, desired: 3) == .ok)
+
+        // podLevel: the per-pod marks under a merged-graph node, same
+        // observed-events-only rule as graphLevel one level down.
+        assert(LgtmClusterJoin.podLevel(healthy) == .ok)
+        assert(LgtmClusterJoin.podLevel(crashing) == .critical)
+        assert(LgtmClusterJoin.podLevel(oomed) == .critical)
+        assert(LgtmClusterJoin.podLevel(flapping) == .warn)          // running, but churning restarts
+        assert(LgtmClusterJoin.podLevel(testPod(namespace: "observability", name: "p", phase: "Pending")) == .warn)
 
         // graphDetail
         assert(LgtmClusterJoin.graphDetail(pods: [healthy, healthy, healthy], ready: 3, desired: 3) == "3/3 ready")

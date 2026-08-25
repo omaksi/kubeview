@@ -86,6 +86,7 @@ struct LgtmMetricsView: View {
                     }
                     statStrip
                     stackSummary
+                    flowSection
                     productSection
                 }
                 .padding()
@@ -237,7 +238,25 @@ struct LgtmMetricsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - By product (grouped list + flow graph)
+    // MARK: - Data flow (one merged graph for the whole stack)
+
+    /// ONE graph for the whole stack, above the per-product groups rather
+    /// than one inside each of them: the cross-product edges
+    /// `LgtmTopology.allEdges` models - Alloy into all three distributors,
+    /// Grafana out of all three query-frontends - only exist as real hops
+    /// once every product is on the same page.
+    private var flowSection: some View {
+        let nodes = nodesForGraph(components: report.components, edges: LgtmTopology.allEdges)
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Data flow", trailing: "\(report.components.count) components measured")
+            LgtmGraphView(nodes: nodes, edges: LgtmTopology.allEdges) { id in
+                selectedComponentID = id
+                withAnimation { scrollProxy?.scrollTo(id, anchor: .center) }
+            }
+        }
+    }
+
+    // MARK: - By product (grouped list)
 
     /// Median coverage across the report - "what a typical component here
     /// actually has", used both by `storeCoverageNote` and as the baseline
@@ -266,15 +285,15 @@ struct LgtmMetricsView: View {
         }
     }
 
-    /// One product's rollup card as the group header, its data-flow graph,
-    /// then its own components - headroom-ordered, never mixed with another
-    /// product's. Grouping by `product` rather than `role` is deliberate: the
-    /// four Mimir caches all share `role == "memcached"` (it's a Helm label,
-    /// not the workload name) but have distinct `title`s, so a role-keyed
-    /// grouping would silently collapse them back into one.
+    /// One product's rollup card as the group header, then its own
+    /// components - headroom-ordered, never mixed with another product's.
+    /// Grouping by `product` rather than `role` is deliberate: the four Mimir
+    /// caches all share `role == "memcached"` (it's a Helm label, not the
+    /// workload name) but have distinct `title`s, so a role-keyed grouping
+    /// would silently collapse them back into one. The data-flow graph is
+    /// NOT here - it is one merged graph for the whole stack, see
+    /// `flowSection`.
     private func productGroupSection(_ group: ProductGroup) -> some View {
-        let edges = LgtmTopology.edges(for: group.product)
-        let nodes = nodesForGraph(product: group.product, components: group.components, edges: edges)
         let outliers = group.components.filter { isCoverageOutlier($0, median: medianCoverage) }.count
 
         return VStack(alignment: .leading, spacing: 10) {
@@ -283,11 +302,6 @@ struct LgtmMetricsView: View {
                     .frame(maxWidth: 420, alignment: .leading)
                 Spacer(minLength: 0)
             }
-            LgtmGraphView(product: group.product, nodes: nodes, edges: edges) { id in
-                selectedComponentID = id
-                withAnimation { scrollProxy?.scrollTo(id, anchor: .center) }
-            }
-            .frame(minHeight: 140)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                 ForEach(group.components) { component in
                     MetricsComponentCard(component: component,
@@ -437,26 +451,22 @@ private func isCoverageOutlier(_ component: LgtmComponent, median: Double) -> Bo
 
 // MARK: - Graph nodes
 
-/// Nodes for one product's data-flow graph: every component actually present
-/// in the report, plus - id for id - anything the topology expects but the
-/// report doesn't contain (`present: false`, so a gap in the data path is
-/// visible instead of silently missing a node). A product `LgtmTopology`
-/// doesn't know the shape of contributes `edges == []`, which still yields
-/// the present-only nodes - the graph still renders something, just with
-/// nothing to connect them.
-private func nodesForGraph(product: String, components: [LgtmComponent], edges: [LgtmFlowEdge]) -> [LgtmGraphNode] {
+/// Nodes for the merged, whole-stack data-flow graph: every component
+/// actually present in the report, plus - id for id - anything the topology
+/// expects but the report doesn't contain (`present: false`, so a gap in the
+/// data path is visible instead of silently missing a node). Input order is
+/// irrelevant, `LgtmGraphLayout.place` derives its own total ordering, so
+/// this just sorts by id for determinism.
+private func nodesForGraph(components: [LgtmComponent], edges: [LgtmFlowEdge]) -> [LgtmGraphNode] {
     let expectedIDs = Set(edges.flatMap { [$0.from, $0.to] })
     let byID = Dictionary(components.map { ($0.title, $0) }, uniquingKeysWith: { first, _ in first })
-    let orderedIDs = expectedIDs.union(byID.keys).sorted { a, b in
-        let laneA = laneRank(laneFor(id: a, component: byID[a], product: product))
-        let laneB = laneRank(laneFor(id: b, component: byID[b], product: product))
-        return laneA != laneB ? laneA < laneB : a < b
-    }
-    return orderedIDs.map { id in
+    return expectedIDs.union(byID.keys).sorted().map { id in
         let component = byID[id]
+        let product = component?.product ?? LgtmTopology.product(forNodeID: id)
         let ratios = component.map(memoryRatios) ?? (typical: nil, peak: nil)
         return LgtmGraphNode(
             id: id,
+            product: product,
             label: nodeLabel(id: id, product: product),
             detail: component.map { nodeDetail($0, typical: ratios.typical, peak: ratios.peak) } ?? "not present",
             lane: laneFor(id: id, component: component, product: product),
@@ -472,9 +482,29 @@ private func nodesForGraph(product: String, components: [LgtmComponent], edges: 
             // looks fine.
             saturation: ratios.typical,
             peakReplicaSaturation: ratios.peak,
-            present: component != nil
+            present: component != nil,
+            // Every replica MEASURED IN THE WINDOW, which legitimately
+            // outnumbers today's live replicas after a rollout or node
+            // churn - see `podCountNote`. The Cluster tab's marks are
+            // today's live pods and will disagree; neither is claiming to
+            // be the other.
+            pods: (component?.usage.replicas ?? []).map {
+                LgtmPodMark(name: $0.name, level: podUsageLevel($0))
+            }
         )
     }
+}
+
+/// One measured replica's own state, for the graph's per-pod marks. Same
+/// rule as `nodeLevel`: only things that actually happened this window, no
+/// predictive cutoff. Memory is deliberately absent - a replica's own
+/// vs-limit ratio is already the node's `peakReplicaSaturation`, and
+/// re-encoding it here would put a threshold this tab is not allowed to pick
+/// into a mark that has room for exactly one.
+private func podUsageLevel(_ pod: LgtmPodUsage) -> LgtmNodeLevel {
+    if pod.oomContainers > 0 { return .critical }
+    if pod.throttleRatio > 0 || pod.restarts > 0 { return .warn }
+    return .ok
 }
 
 /// `LgtmComponent.role` for a real node; for one the topology expects but the
@@ -489,10 +519,6 @@ private func nodesForGraph(product: String, components: [LgtmComponent], edges: 
 private func laneFor(id: String, component: LgtmComponent?, product: String) -> LgtmLane {
     let role = component?.role ?? nodeLabel(id: id, product: product)
     return LgtmTopology.lane(product: product, role: role)
-}
-
-private func laneRank(_ lane: LgtmLane) -> Int {
-    LgtmLane.allCases.firstIndex(of: lane) ?? LgtmLane.allCases.count
 }
 
 private func nodeLabel(id: String, product: String) -> String {
@@ -564,21 +590,6 @@ private func nodeLevel(ratio: Double?, oomContainers: Double, throttleRatio: Dou
     if oomContainers > 0 { return .critical }
     if throttleRatio > 0 { return .warn }
     return .ok
-}
-
-// ponytail: hardcoded five-entry product palette; a product name outside
-// {mimir, loki, tempo, grafana, alloy} falls back to plain secondary gray
-// rather than crashing. Upgrade path: hash the product string into a stable
-// hue if the stack ever grows a sixth first-class product.
-private func productColor(_ product: String) -> Color {
-    switch product {
-    case "mimir":   return .purple
-    case "loki":    return .green
-    case "tempo":   return .orange
-    case "grafana": return .pink
-    case "alloy":   return .blue
-    default:        return .secondary
-    }
 }
 
 private func formatDuration(_ seconds: Double) -> String {
@@ -688,7 +699,7 @@ private struct ProductRollupCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Circle().fill(productColor(product)).frame(width: 8, height: 8)
+                Circle().fill(LgtmGraphView.productColor(product)).frame(width: 8, height: 8)
                 Text(product.capitalized).font(.callout.weight(.medium))
                 Spacer()
                 Text("\(rollup.count) component\(rollup.count == 1 ? "" : "s")")
@@ -998,7 +1009,7 @@ extension LgtmMetricsView {
         let (unevenTypical, unevenPeak) = memoryRatios(uneven)
         assert(unevenTypical == 0.5)
         assert(unevenPeak == 0.9)
-        let unevenNode = nodesForGraph(product: "mimir", components: [uneven], edges: []).first
+        let unevenNode = nodesForGraph(components: [uneven], edges: []).first
         assert(unevenNode?.saturation == 0.5)
         assert(unevenNode?.peakReplicaSaturation == 0.9)
         assert(unevenNode?.detail == "50% typical · 90% peak of limit")
@@ -1006,7 +1017,7 @@ extension LgtmMetricsView {
 
         let overPeak = component("overpeak", memLimit: 1000, p99: 1100,
                                   pods: [pod("p0", mem: 100), pod("p1", mem: 1100)])
-        let overPeakNode = nodesForGraph(product: "mimir", components: [overPeak], edges: []).first
+        let overPeakNode = nodesForGraph(components: [overPeak], edges: []).first
         assert(overPeakNode?.level == .critical)   // one replica measured over its own limit, even though typical (0.6) is not
 
         // Genuine median vs mean divergence (3 replicas, odd count): the
@@ -1038,7 +1049,7 @@ extension LgtmMetricsView {
         // case here, so peak stays nil.
         let overLimit = component("mimir-distributor", product: "mimir", role: "distributor",
                                    title: "mimir/distributor", memLimit: 1000, p99: 1200)
-        let overNode = nodesForGraph(product: "mimir", components: [overLimit], edges: []).first
+        let overNode = nodesForGraph(components: [overLimit], edges: []).first
         assert(overNode?.saturation == 1.2)   // NOT clamped to 1.0
         assert(overNode?.peakReplicaSaturation == nil)
         assert(overNode?.detail == "120% of limit")
@@ -1051,12 +1062,36 @@ extension LgtmMetricsView {
         let onlyDistributor = component("mimir-distributor", product: "mimir", role: "distributor",
                                          title: "mimir/distributor", memLimit: 1000, p99: 100)
         let nodesByID = Dictionary(uniqueKeysWithValues:
-            nodesForGraph(product: "mimir", components: [onlyDistributor], edges: flowEdges).map { ($0.id, $0) })
+            nodesForGraph(components: [onlyDistributor], edges: flowEdges).map { ($0.id, $0) })
         assert(nodesByID["mimir/distributor"]?.present == true)
         assert(nodesByID["mimir/ingester"]?.present == false)   // expected via edges, no matching component
         assert(nodesByID["mimir/querier"]?.present == false)
         assert(nodesByID["mimir/querier"]?.level == .unknown)
         assert(nodesByID["mimir/querier"]?.saturation == nil)
+
+        // The merged graph: nodes from several products in ONE call, each
+        // carrying the product hue the renderer tells them apart by, and an
+        // absent node resolving its product from the id alone.
+        let merged = Dictionary(uniqueKeysWithValues:
+            nodesForGraph(components: mixedProducts, edges: LgtmTopology.allEdges).map { ($0.id, $0) })
+        assert(merged["mimir/distributor"]?.product == "mimir")
+        assert(merged["loki/querier"]?.product == "loki")
+        assert(merged["tempo/ingester"]?.product == "tempo")     // expected by the topology, absent here
+        assert(merged["tempo/ingester"]?.present == false)
+        assert(merged["alloy"]?.product == "alloy")
+        assert(merged["grafana"]?.product == "grafana")
+        assert(merged["grafana"]?.label == "grafana")            // bare id, no "product/" prefix to strip
+
+        // Per-pod marks: one per replica measured this window, levelled by
+        // observed events only.
+        assert(merged["mimir/distributor"]?.pods.isEmpty == true)   // no per-pod data on this fixture
+        let marked = nodesForGraph(components: [uneven], edges: []).first
+        assert(marked?.pods.map(\.name) == ["p0", "p1"])
+        assert(marked?.pods.allSatisfy { $0.level == .ok } == true)
+        assert(podUsageLevel(pod("q", mem: 1, oom: 1)) == .critical)
+        assert(podUsageLevel(pod("q", mem: 1, throttle: 0.001)) == .warn)   // any recorded throttle, no minimum
+        assert(podUsageLevel(pod("q", mem: 1, restarts: 1)) == .warn)
+        assert(podUsageLevel(pod("q", mem: 1)) == .ok)
 
         // podSuffix strips the component's own name, leaving the ordinal or
         // hash that actually distinguishes replicas.

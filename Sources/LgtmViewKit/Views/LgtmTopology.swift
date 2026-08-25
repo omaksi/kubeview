@@ -35,11 +35,29 @@ enum LgtmNodeLevel {
     case unknown, ok, warn, critical
 }
 
+/// One pod under a component node, surfaced in the merged graph as a single
+/// mark. Deliberately just a name and an observed level: the full per-pod
+/// detail already has two homes (`PodInspectSheet` on the Cluster tab, the
+/// per-pod bars on each Metrics card) and duplicating it into a 180pt chip
+/// would only make all three worse.
+struct LgtmPodMark: Hashable {
+    let name: String
+    /// Observed events only, same rule as `LgtmGraphNode.level` - never a
+    /// saturation cutoff.
+    let level: LgtmNodeLevel
+}
+
 /// A node handed to the renderer. Both tabs build these from their own data -
 /// the Cluster tab from live pod state, the Metrics tab from usage history.
 struct LgtmGraphNode: Identifiable, Hashable {
     /// Matches `LgtmComponent.title`, which is unique per report by invariant.
     let id: String
+    /// Which product this node belongs to (`LgtmComponent.product`, or
+    /// `LgtmTopology.product(forNodeID:)` for a node the topology expects but
+    /// the cluster doesn't have). The merged graph draws every product at
+    /// once, so this is what tells them apart - see
+    /// `LgtmGraphView.productColor`.
+    let product: String
     let label: String
     /// One short line under the label: "3/3 ready" or "1.7Gi p99".
     let detail: String
@@ -71,6 +89,11 @@ struct LgtmGraphNode: Identifiable, Hashable {
     /// False when the topology expects this role but the cluster has no such
     /// workload - a gap in the data path is itself worth seeing.
     let present: Bool
+    /// Every pod behind this node, one mark each. Empty when the caller has
+    /// no per-pod data (pre-classification on the Cluster tab, an analyser
+    /// predating per-pod output on the Metrics tab). `var` with a default for
+    /// the same reason as `peakReplicaSaturation`.
+    var pods: [LgtmPodMark] = []
 }
 
 enum LgtmTopology {
@@ -94,6 +117,27 @@ enum LgtmTopology {
 
     private static func touches(_ edge: LgtmFlowEdge, prefix: String) -> Bool {
         edge.from.hasPrefix(prefix) || edge.to.hasPrefix(prefix)
+    }
+
+    /// Every product's data path as one deduplicated edge list - the merged,
+    /// whole-stack graph both tabs draw. This is where the cross-product
+    /// edges stop being a stub at each end and become a real hop: Alloy's
+    /// fan-out and Grafana's fan-in appear in the tables of BOTH endpoints
+    /// (see `edges(for:)`), so a plain concatenation would draw each of them
+    /// twice and make the legend's link count lie.
+    static let allEdges: [LgtmFlowEdge] = {
+        var seen: Set<LgtmFlowEdge> = []
+        return known.flatMap { edges(for: $0) }.filter { seen.insert($0).inserted }
+    }()
+
+    /// Which product a node id belongs to, for an id with no `LgtmComponent`
+    /// behind it (a hop the topology expects but the cluster doesn't run).
+    /// Ids are `product/role` except Alloy's and Grafana's, which are bare
+    /// workload names - see `edges(for:)`.
+    static func product(forNodeID id: String) -> String {
+        if let slash = id.firstIndex(of: "/") { return String(id[id.startIndex..<slash]) }
+        if id.hasPrefix("alloy") { return "alloy" }
+        return id
     }
 
     /// Which lane a role belongs to. Driven by role alone wherever possible -
@@ -332,6 +376,31 @@ extension LgtmTopology {
         assert(edges(for: "mimir").contains { $0.from == "alloy" && $0.to == "mimir/distributor" })
         assert(edges(for: "mimir").contains { $0.from == "grafana" && $0.to == "mimir/query-frontend" })
         assert(edges(for: "grafana").contains { $0.from == "grafana" && $0.to == "loki/query-frontend" })
+
+        // The merged whole-stack edge list. Deduplication is the one thing
+        // that can silently go wrong here: every cross-product edge is listed
+        // by both endpoints' tables, so a concatenation without it draws each
+        // of them twice and inflates the graph's own link count.
+        assert(Set(allEdges).count == allEdges.count, "allEdges must not repeat a cross-product edge")
+        assert(!hasCycle(allEdges), "the merged whole-stack data path must still be a DAG")
+        assert(!allEdges.contains { $0.from == $0.to }, "the merged data path has a self-loop")
+        for product in known {
+            assert(edges(for: product).allSatisfy(allEdges.contains),
+                   "\(product)'s own edges must all survive the merge")
+        }
+
+        assert(LgtmTopology.product(forNodeID: "mimir/store-gateway") == "mimir")
+        assert(LgtmTopology.product(forNodeID: "loki/compactor") == "loki")
+        assert(LgtmTopology.product(forNodeID: "alloy") == "alloy")
+        assert(LgtmTopology.product(forNodeID: "alloy-singleton") == "alloy")
+        assert(LgtmTopology.product(forNodeID: "grafana") == "grafana")
+        // Every endpoint of the merged list resolves to a product the
+        // renderer has a colour for - a node landing on the grey fallback
+        // would be an id this function stopped recognising.
+        for id in Set(allEdges.flatMap { [$0.from, $0.to] }) {
+            assert(known.contains(LgtmTopology.product(forNodeID: id)),
+                   "merged node id \(id) resolves to an unknown product")
+        }
     }
 }
 #endif

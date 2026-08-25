@@ -126,8 +126,8 @@ Sources/
         ├── LgtmView.swift        # LgtmRootView (tab shell: Cluster/Metrics/Findings) + LgtmFindingsView, LgtmStore two-pass loader, LgtmWindow, FindingCard, SeverityTag, Sparkline
         ├── LgtmClusterView.swift # Cluster tab: live per-pod topology from ClusterStore, no metrics dependency
         ├── LgtmMetricsView.swift # Metrics tab: per-pod history, headroom, coverage outliers
-        ├── LgtmTopology.swift    # LGTM data-path model: per-product edges, lanes, cross-product Alloy/Grafana
-        └── LgtmGraphView.swift   # Data-flow graph renderer: Kahn tiering, cycle-safe, saturation + peak-replica mark
+        ├── LgtmTopology.swift    # LGTM data-path model: per-product edges + `allEdges` (the merged whole-stack list), lanes, cross-product Alloy/Grafana, LgtmGraphNode/LgtmPodMark
+        └── LgtmGraphView.swift   # The one merged, vertical data-flow graph: Kahn tiering (tier -> y), cycle-safe, product hue, saturation + peak-replica mark, per-pod marks
 LgtmView/
 └── LgtmViewApp.swift             # @main - deliberately empty, mirrors KubeView/KubeViewApp.swift
 Tools/
@@ -434,13 +434,25 @@ Rules that fall out of it:
 | Metrics | `LgtmMetricsView.swift` | per-pod usage history from Mimir | no |
 | Findings | `LgtmView.swift` | rule output | no |
 
-`LgtmTopology.swift` and `LgtmGraphView.swift` supply the data-flow graph both of the first two tabs draw.
+`LgtmTopology.swift` and `LgtmGraphView.swift` supply the data-flow graph both of the first two tabs draw - see "One merged graph, drawn vertically" below.
 
 **Two passes, because they fail independently and one of them is fast.** `LgtmStore.load()` runs `--no-metrics` first (~1.5s, Kubernetes API only, no port-forward) and paints the Cluster tab, then the full pass (~7s at 24h) fills Metrics and Findings. When the metrics pass fails the Cluster tab is already usable and the other two say so, rather than the window looking broken. That matters because a broken metrics store is exactly what someone opens this view to investigate - the original single-pass design showed nothing at all in that case.
 
 **Whatever hosts `LgtmRootView` must key it on the context** - `.id(context)`, not just pass the context in as a parameter. A parent view that keeps its own SwiftUI identity across a cluster switch won't rebuild the `@StateObject` underneath it, and the view goes on showing the previous cluster's report under the new cluster's name. That shipped once, inside `KubeView`'s old `ContentView`, and cost an investigation - that call site is gone now that LGTM has been cut from `KubeView`'s navigation entirely. The hazard is general, not specific to that deleted call site, which is why `LgtmContextRoot` (`LgtmViewScenes.swift`, the standalone app's own host) re-establishes the same `.id(context)` keying independently rather than assuming it was inherited from anywhere.
 
 **The lookback defaults to 24h** (`LgtmWindow`), persisted per context, as is the selected tab. Cost is not linear: 1d ~6s, 7d and 14d ~19s, **30d ~2m** - subquery resolution is a cost multiplier at a fixed step. And retention caps it anyway: the reference store holds about 8 days, so 14d and 30d return the same data and 30d merely takes two minutes to do it. `LgtmMetricsView` states the store's median coverage against the requested window rather than letting the picker imply a promise it cannot keep.
+
+### One merged graph, drawn vertically
+
+Both graph-drawing tabs render **one graph for the whole stack**, not one per product. The seams are the reason: `LgtmTopology`'s `Cross` enum already models Alloy fanning into all three distributors and Grafana reading all three query-frontends, and five separate pictures could only ever draw each of those edges twice - as a stub at each end. `LgtmTopology.allEdges` is that merged list, **deduplicated**, because every cross-product edge appears in the tables of *both* endpoints (`edges(for:)` unions `Cross` into each product), so a plain concatenation double-draws them and inflates the legend's own link count. `LgtmTopology.selfCheck` asserts the dedup, the DAG property and that every merged node id still resolves to a known product.
+
+Three consequences worth knowing before touching this:
+
+- **The flow runs top to bottom, so `LgtmGraphLayout.place` returns `(node, tier, slot)`, not `(node, column, row)`.** Tier is the position *along* the flow and maps to **y**; slot is the position *across* it and maps to x. The rename is not cosmetic - `column` naming a y coordinate is exactly the kind of thing that gets "fixed" back the wrong way. Merged, the reference 30-component stack is 32 nodes over **9 tiers × 7 slots**, roughly 1400×1290pt: deeper than it is wide, which is why vertical is the right axis. `LgtmMergedGraphTests` pins those numbers against the real edge table.
+- **Slot order is barycenter first, then lane, then id.** It used to be lane first, which was right for a single product's graph and actively wrong once merged: lane-first interleaves mimir, loki and tempo across the full width, while barycenter-first pulls each node under its own parents and keeps the three products as legible columns (most edges are intra-product). Lane still decides tier 0 outright - nothing there has a parent, so every barycenter ties - and breaks ties below it.
+- **Product is a hue; load is the fill.** `LgtmGraphView.productColor` (mimir purple, loki blue, tempo teal, alloy pink, grafana brown, unknown grey) is a **category** encoding and is explicitly allowed on these two tabs, unlike a verdict. It is deliberately disjoint from `LgtmGraphView.color(_ level:)`'s green/orange/red and from the orange "not deployed" mark - this is the one view that shows both vocabularies on the same chip, so a shared hue would read as a severity the Cluster and Metrics tabs are not allowed to assign. Product also appears in words on every chip (`MIMIR · WRITE`), so the graph survives someone who can't tell purple from blue. `ProductRollupCard` on the Metrics tab reads the same function - there is one palette, not two.
+
+**Component nodes surface their pods as marks, not as detail.** `LgtmGraphNode.pods` is `[LgtmPodMark]` (name + observed level), drawn as one small dot per pod under the chip's detail line, capped at 14 with a `+N`; only unhappy pods get named in the tooltip. Levels come from observed events on each pod alone - the Cluster tab from live pod state (`LgtmClusterJoin.podLevel`), the Metrics tab from what was measured in the window (`podUsageLevel`: OOM, throttle, restarts). Deliberately **not** a second per-pod number: full per-pod detail already lives in `PodInspectSheet` and in each tab's per-pod bars, and a third copy inside a 180pt chip would make all three worse. The two tabs' marks will legitimately disagree in count - see "Pods in the window outnumber replicas".
 
 ### The division of labour across the three tabs
 

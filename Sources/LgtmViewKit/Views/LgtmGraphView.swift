@@ -3,35 +3,47 @@ import KubeModel
 import KubeClient
 import KubeUI
 
-/// Draws one product's data path: nodes laid out left to right along the flow,
-/// coloured by how loaded they are, so a bottleneck reads as a hot node with
-/// everything downstream of it idle.
+/// Draws the whole LGTM stack as ONE top-to-bottom graph: every product's
+/// components in a single tiered flow, so the cross-product hops
+/// `LgtmTopology` already models - Alloy feeding all three ingest paths,
+/// Grafana reading all three query paths - are edges on the page instead of
+/// something the reader has to hold in their head across five separate
+/// pictures. Five per-product graphs could only ever draw each of those
+/// seams twice, as a stub at each end.
+///
+/// Vertical rather than left-to-right because the merged graph is long: nine
+/// tiers deep and seven nodes wide on the reference 30-component stack, which
+/// is a shape a window scrolls comfortably downwards and awkwardly sideways.
+/// `LgtmGraphLayout.place` returns `(node, tier, slot)`; this view maps tier
+/// to y and slot to x.
+///
+/// Product is a hue, load is the fill. The two vocabularies are deliberately
+/// disjoint (see `productColor`), so in the one view that shows both at once
+/// a colour can never be read as a verdict.
 struct LgtmGraphView: View {
-    let product: String
     let nodes: [LgtmGraphNode]
     let edges: [LgtmFlowEdge]
     /// Called with a node id when the user picks one.
     var onSelect: ((String) -> Void)?
 
     // Wide enough for the longest role label ("overrides-exporter",
-    // "single-binary") without truncating on the common case; tall enough
-    // for label + lane + detail, matching NamespaceGraphView's three-line
-    // chip shape at a slightly larger size - this graph tops out around 15
-    // nodes for Mimir, not the hundreds a namespace can have, so there's
-    // room to spend.
+    // "alloy-singleton") without truncating on the common case; tall enough
+    // for label + product/lane + detail + the pod pip row.
     fileprivate static let nodeW: CGFloat = 180
-    fileprivate static let nodeH: CGFloat = 64
-    private static let colGap: CGFloat = 60
-    private static let rowGap: CGFloat = 12
+    fileprivate static let nodeH: CGFloat = 92
+    // Vertical flow: `tierGap` is the down-the-page gap between tiers,
+    // `slotGap` the sideways gap between siblings sharing one.
+    private static let tierGap: CGFloat = 54
+    private static let slotGap: CGFloat = 22
     private static let pad: CGFloat = 14
 
-    private var placed: [(node: LgtmGraphNode, column: Int, row: Int)] {
+    private var placed: [(node: LgtmGraphNode, tier: Int, slot: Int)] {
         LgtmGraphLayout.place(nodes: nodes, edges: edges)
     }
 
     var body: some View {
         if nodes.isEmpty {
-            Text("No \(product) components to graph")
+            Text("No components to graph")
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
@@ -48,27 +60,54 @@ struct LgtmGraphView: View {
 
     // MARK: - Legend
 
+    /// Products in `LgtmTopology.known` order, then anything else the report
+    /// classified that this table has no entry for, so an unrecognised
+    /// product still gets a swatch rather than silently sharing the fallback
+    /// grey with nothing to explain it.
+    private var productsInGraph: [String] {
+        let present = Set(nodes.map(\.product)).filter { !$0.isEmpty }
+        let ordered = LgtmTopology.known.filter(present.contains)
+        return ordered + present.subtracting(ordered).sorted()
+    }
+
     private var legend: some View {
-        HStack(spacing: 14) {
-            Text("\(nodes.count) components, \(edges.count) links")
-                .font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            levelDot(.ok, "ok")
-            levelDot(.warn, "warn")
-            levelDot(.critical, "critical")
-            if nodes.contains(where: { !$0.present }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "questionmark.diamond.fill")
-                        .font(.system(size: 8)).foregroundStyle(.orange)
-                    Text("not deployed").font(.caption2).foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 14) {
+                Text("\(nodes.count) components, \(edges.count) links")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                levelDot(.ok, "ok")
+                levelDot(.warn, "warn")
+                levelDot(.critical, "critical")
+                if nodes.contains(where: { !$0.present }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "questionmark.diamond.fill")
+                            .font(.system(size: 8)).foregroundStyle(.orange)
+                        Text("not deployed").font(.caption2).foregroundStyle(.orange)
+                    }
+                }
+            }
+            HStack(spacing: 12) {
+                ForEach(productsInGraph, id: \.self) { product in
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Self.productColor(product))
+                            .frame(width: 10, height: 8)
+                        Text(product).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if nodes.contains(where: { !$0.pods.isEmpty }) {
+                    Text("one mark per pod").font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
-        // This is a map, not a verdict: colour here reflects observed events
-        // on the node (not ready, crashlooping, OOMKilled, over a limit,
-        // throttling recorded) - the two calling tabs populate `level` only
-        // from those, never from a saturation cutoff this view invents.
-        .help("Colour reflects observed events, not a saturation threshold")
+        // This is a map, not a verdict: level colour here reflects observed
+        // events on the node (not ready, crashlooping, OOMKilled, over a
+        // limit, throttling recorded) - the two calling tabs populate `level`
+        // only from those, never from a saturation cutoff this view invents.
+        // Product hue says which product a node belongs to and nothing else.
+        .help("Hue is which product; level colour reflects observed events, not a saturation threshold")
     }
 
     private func levelDot(_ level: LgtmNodeLevel, _ label: String) -> some View {
@@ -87,32 +126,58 @@ struct LgtmGraphView: View {
         }
     }
 
-    // MARK: - Canvas
-
-    private func canvasSize(_ placed: [(node: LgtmGraphNode, column: Int, row: Int)]) -> CGSize {
-        let cols = CGFloat((placed.map(\.column).max() ?? 0) + 1)
-        let rows = CGFloat((placed.map(\.row).max() ?? 0) + 1)
-        return CGSize(width: cols * (Self.nodeW + Self.colGap) - Self.colGap,
-                      height: rows * (Self.nodeH + Self.rowGap) - Self.rowGap)
+    /// A CATEGORY encoding - which of the five products a node belongs to -
+    /// never a verdict. Deliberately disjoint from `color(_ level:)`'s
+    /// green/orange/red vocabulary and from the orange "not deployed" mark:
+    /// this graph shows product and observed level side by side on the same
+    /// chip, so a shared hue between the two would be read as a severity the
+    /// Cluster and Metrics tabs are not allowed to assign.
+    // ponytail: hardcoded five-entry palette; a sixth first-class product
+    // falls back to grey rather than crashing. Upgrade path is hashing the
+    // product name into a stable hue, which is only worth it if the stack
+    // ever grows past what five hand-picked, mutually distinguishable
+    // colours can cover.
+    static func productColor(_ product: String) -> Color {
+        switch product {
+        case "mimir":   return .purple
+        case "loki":    return .blue
+        case "tempo":   return .teal
+        case "alloy":   return .pink
+        case "grafana": return .brown
+        default:        return .gray
+        }
     }
 
-    private func point(_ column: Int, _ row: Int) -> CGPoint {
-        CGPoint(x: CGFloat(column) * (Self.nodeW + Self.colGap) + Self.nodeW / 2,
-                y: CGFloat(row) * (Self.nodeH + Self.rowGap) + Self.nodeH / 2)
+    // MARK: - Canvas
+
+    private func canvasSize(_ placed: [(node: LgtmGraphNode, tier: Int, slot: Int)]) -> CGSize {
+        let tiers = CGFloat((placed.map(\.tier).max() ?? 0) + 1)
+        let slots = CGFloat((placed.map(\.slot).max() ?? 0) + 1)
+        return CGSize(width: slots * (Self.nodeW + Self.slotGap) - Self.slotGap,
+                      height: tiers * (Self.nodeH + Self.tierGap) - Self.tierGap)
+    }
+
+    private func point(_ tier: Int, _ slot: Int) -> CGPoint {
+        CGPoint(x: CGFloat(slot) * (Self.nodeW + Self.slotGap) + Self.nodeW / 2,
+                y: CGFloat(tier) * (Self.nodeH + Self.tierGap) + Self.nodeH / 2)
     }
 
     /// The graph is a fixed-size `Canvas` + positioned chips inside a
     /// `ScrollView`, not the pan/zoom container `NamespaceGraphView` uses.
     /// That custom gesture handling earns its keep there because a busy
-    /// namespace can be thousands of points tall; this graph tops out
-    /// around 15-20 nodes (Mimir, the largest product) and fits or scrolls
-    /// like any other content - a second gesture-driven pan/zoom
-    /// implementation would be solving a problem this view doesn't have.
+    /// namespace can be thousands of points tall; even merged, this graph
+    /// tops out around 32 nodes and scrolls like any other content - a
+    /// second gesture-driven pan/zoom implementation would be solving a
+    /// problem this view doesn't have.
     private var canvasContent: some View {
         let laid = placed
         let size = canvasSize(laid)
         var points: [String: CGPoint] = [:]
-        for p in laid { points[p.node.id] = point(p.column, p.row) }
+        var productByID: [String: String] = [:]
+        for p in laid {
+            points[p.node.id] = point(p.tier, p.slot)
+            productByID[p.node.id] = p.node.product
+        }
         let w = max(size.width, Self.nodeW)
         let h = max(size.height, Self.nodeH)
 
@@ -120,7 +185,11 @@ struct LgtmGraphView: View {
             Canvas { ctx, _ in
                 for e in edges {
                     guard let a = points[e.from], let b = points[e.to] else { continue }
-                    drawEdge(&ctx, from: a, to: b, verb: e.verb)
+                    // Coloured by the SOURCE product, so Alloy's fan-out into
+                    // three different products' distributors reads as one
+                    // family of edges leaving one place.
+                    drawEdge(&ctx, from: a, to: b, verb: e.verb,
+                             color: Self.productColor(productByID[e.from] ?? ""))
                 }
             }
             .frame(width: w, height: h)
@@ -133,22 +202,24 @@ struct LgtmGraphView: View {
         .frame(width: w, height: h)
     }
 
-    /// Curve + arrowhead + verb label. Mirrors the technique
-    /// `NamespaceGraphView` uses for its own Canvas edges (resolved `Text`
-    /// with `.shading` set explicitly, not `.foregroundStyle` on the
-    /// `Text` itself, which Canvas's `resolve` doesn't carry through) -
-    /// same problem, same proven fix, written fresh here since that file is
-    /// out of this lane.
-    private func drawEdge(_ ctx: inout GraphicsContext, from start0: CGPoint, to end0: CGPoint, verb: String) {
-        let start = CGPoint(x: start0.x + Self.nodeW / 2, y: start0.y)
-        let end = CGPoint(x: end0.x - Self.nodeW / 2, y: end0.y)
-        let bend = max((end.x - start.x) * 0.45, 14)
+    /// Curve + arrowhead + verb label, running downwards: leaves the bottom
+    /// edge of the source chip, enters the top edge of the target. Mirrors
+    /// the technique `NamespaceGraphView` uses for its own Canvas edges
+    /// (resolved `Text` with `.shading` set explicitly, not
+    /// `.foregroundStyle` on the `Text` itself, which Canvas's `resolve`
+    /// doesn't carry through) - same problem, same proven fix, written fresh
+    /// here since that file is out of this lane.
+    private func drawEdge(_ ctx: inout GraphicsContext, from start0: CGPoint, to end0: CGPoint,
+                          verb: String, color: Color) {
+        let start = CGPoint(x: start0.x, y: start0.y + Self.nodeH / 2)
+        let end = CGPoint(x: end0.x, y: end0.y - Self.nodeH / 2)
+        let bend = max((end.y - start.y) * 0.45, 14)
         var path = Path()
         path.move(to: start)
         path.addCurve(to: end,
-                      control1: CGPoint(x: start.x + bend, y: start.y),
-                      control2: CGPoint(x: end.x - bend, y: end.y))
-        ctx.stroke(path, with: .color(Color.secondary.opacity(0.5)), lineWidth: 1.2)
+                      control1: CGPoint(x: start.x, y: start.y + bend),
+                      control2: CGPoint(x: end.x, y: end.y - bend))
+        ctx.stroke(path, with: .color(color.opacity(0.5)), lineWidth: 1.2)
 
         // Arrowhead aimed along the straight start->end vector rather than
         // the curve's true end tangent - close enough at this node spacing
@@ -170,13 +241,13 @@ struct LgtmGraphView: View {
             arrow.addLine(to: CGPoint(x: backX + px * size * 0.45, y: backY + py * size * 0.45))
             arrow.addLine(to: CGPoint(x: backX - px * size * 0.45, y: backY - py * size * 0.45))
             arrow.closeSubpath()
-            ctx.fill(arrow, with: .color(Color.secondary.opacity(0.8)))
+            ctx.fill(arrow, with: .color(color.opacity(0.85)))
         }
 
-        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 7)
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
         var text = ctx.resolve(Text(verb).font(.system(size: 8, weight: .medium)))
         text.shading = .color(.secondary)
-        let measured = text.measure(in: CGSize(width: Self.colGap + 20, height: 20))
+        let measured = text.measure(in: CGSize(width: Self.nodeW, height: 20))
         ctx.fill(Path(roundedRect: CGRect(x: mid.x - measured.width / 2 - 2, y: mid.y - measured.height / 2,
                                           width: measured.width + 4, height: measured.height),
                       cornerRadius: 2),
@@ -188,7 +259,7 @@ struct LgtmGraphView: View {
 // MARK: - Layout
 
 /// Pure tiering over an arbitrary node/edge list - no SwiftUI, so it can be
-/// exercised directly the way `ResourceGraph`'s layout is. Column is
+/// exercised directly the way `ResourceGraph`'s layout is. `tier` is
 /// longest-path-from-source via Kahn's algorithm rather than
 /// `ResourceGraph`'s static kind-based column table: `ResourceGraph.column`
 /// works because `ResourceKind` gives it a fixed small vocabulary to switch
@@ -196,13 +267,18 @@ struct LgtmGraphView: View {
 /// mean inventing a fake kind per LGTM role, worse than writing the ~20
 /// lines below), and this file already has the real edges in hand, which
 /// make longest-path tiering both correct and cheap at this node count.
+///
+/// The vocabulary is `tier`/`slot`, not `column`/`row`, because the renderer
+/// draws the flow downwards: tier is the position ALONG the flow (y here),
+/// slot the position across it (x).
 enum LgtmGraphLayout {
-    /// Keeps the hot path (write, then read) together at the front of each
-    /// column and pushes caches/maintenance to the back - the ordering the
-    /// brief asks for, applied as the primary row-sort key.
+    /// Breaks slot ties: keeps the hot path (write, then read) ahead of
+    /// caches and maintenance. Secondary to the barycenter now that the graph
+    /// is merged - see `place` - but it is the whole ordering for tier 0,
+    /// where nothing has a parent to sit under yet.
     static let lanePriority: [LgtmLane: Int] = [.write: 0, .read: 1, .standalone: 2, .maintenance: 3, .cache: 4]
 
-    static func place(nodes: [LgtmGraphNode], edges: [LgtmFlowEdge]) -> [(node: LgtmGraphNode, column: Int, row: Int)] {
+    static func place(nodes: [LgtmGraphNode], edges: [LgtmFlowEdge]) -> [(node: LgtmGraphNode, tier: Int, slot: Int)] {
         guard !nodes.isEmpty else { return [] }
         let ids = Set(nodes.map(\.id))
         // Self-loops and edges pointing at an id not in `nodes` are dropped
@@ -223,73 +299,75 @@ enum LgtmGraphLayout {
         let isolated = nodes.filter { !touched.contains($0.id) }
         let connected = nodes.filter { touched.contains($0.id) }
 
-        var column: [String: Int] = [:]
+        var tier: [String: Int] = [:]
         var queue = connected.filter { (indegree[$0.id] ?? 0) == 0 }.map(\.id)
         var head = 0
-        for id in queue { column[id] = 0 }
+        for id in queue { tier[id] = 0 }
         while head < queue.count {
             let id = queue[head]; head += 1
-            let c = column[id] ?? 0
+            let t = tier[id] ?? 0
             for next in outgoing[id] ?? [] {
                 indegree[next, default: 0] -= 1
-                column[next] = max(column[next] ?? 0, c + 1)
+                tier[next] = max(tier[next] ?? 0, t + 1)
                 if indegree[next] == 0 { queue.append(next) }
             }
         }
         // Anything left has indegree > 0 forever - it's on a cycle. The real
-        // topologies never are (see `LgtmTopology.selfCheck`), but a bad
-        // edge table reaching this code must render, not hang: park
-        // whatever's left after the furthest column Kahn's algorithm
-        // actually resolved, one pass, no recursion back into the cycle.
-        let resolvedMax = column.values.max() ?? 0
-        for n in connected where column[n.id] == nil {
-            column[n.id] = resolvedMax + 1
+        // topologies never are (see `LgtmTopology.selfCheck`, which asserts
+        // it of the merged edge list too), but a bad edge table reaching this
+        // code must render, not hang: park whatever's left after the furthest
+        // tier Kahn's algorithm actually resolved, one pass, no recursion
+        // back into the cycle.
+        let resolvedMax = tier.values.max() ?? 0
+        for n in connected where tier[n.id] == nil {
+            tier[n.id] = resolvedMax + 1
         }
         // Nodes with no edges at all get their own placement rule: if
-        // *nothing* has edges (an unknown product, or a caller-supplied
-        // product this table has no entry for), spread them by lane so the
-        // graph still shows structure instead of one indistinguishable
-        // stack. If only *some* nodes are edge-free (e.g. Mimir's
-        // overrides-exporter, which genuinely has none), shelve them
-        // together after the real flow instead of crowding column 0 next to
-        // genuine sources.
+        // *nothing* has edges (a caller-supplied node set this topology has
+        // no entry for), spread them by lane so the graph still shows
+        // structure instead of one indistinguishable stack. If only *some*
+        // nodes are edge-free (e.g. Mimir's overrides-exporter, which
+        // genuinely has none), shelve them together after the real flow
+        // instead of crowding tier 0 next to genuine sources.
         if !isolated.isEmpty {
             if connected.isEmpty {
-                for n in isolated { column[n.id] = lanePriority[n.lane] ?? 2 }
+                for n in isolated { tier[n.id] = lanePriority[n.lane] ?? 2 }
             } else {
-                let shelf = (column.values.max() ?? -1) + 1
-                for n in isolated { column[n.id] = shelf }
+                let shelf = (tier.values.max() ?? -1) + 1
+                for n in isolated { tier[n.id] = shelf }
             }
         }
 
-        // Rows: lane first (keeps write/read together, pushes cache/
-        // maintenance aside), then barycenter of already-placed parents -
-        // the same idea as `ResourceGraph.layout`'s pass, reimplemented
-        // rather than shared since it operates on `GraphNode`/`GraphEdge`,
-        // then id for a total, deterministic order.
+        // Slots: barycenter of already-placed parents FIRST, then lane, then
+        // id for a total, deterministic order. Barycenter leads because the
+        // graph is merged now - most edges are intra-product, so pulling each
+        // node under its own parents is what keeps mimir, loki and tempo as
+        // three legible columns instead of interleaving them by lane across
+        // the whole width. Lane still decides tier 0 outright (nothing there
+        // has a parent, so every barycenter ties) and breaks ties below it.
         var parents: [String: [String]] = [:]
         for e in liveEdges { parents[e.to, default: []].append(e.from) }
-        var row: [String: Int] = [:]
-        let maxColumn = column.values.max() ?? 0
-        for c in 0...maxColumn {
-            let inColumn = nodes.filter { column[$0.id] == c }
-            let ordered = inColumn.sorted { a, b in
+        var slot: [String: Int] = [:]
+        let maxTier = tier.values.max() ?? 0
+        for t in 0...maxTier {
+            let inTier = nodes.filter { tier[$0.id] == t }
+            let ordered = inTier.sorted { a, b in
+                let ba = barycenter(a.id, parents, slot), bb = barycenter(b.id, parents, slot)
+                if ba != bb { return ba < bb }
                 let la = lanePriority[a.lane] ?? 9, lb = lanePriority[b.lane] ?? 9
                 if la != lb { return la < lb }
-                let ba = barycenter(a.id, parents, row), bb = barycenter(b.id, parents, row)
-                if ba != bb { return ba < bb }
                 return a.id < b.id
             }
-            for (r, n) in ordered.enumerated() { row[n.id] = r }
+            for (s, n) in ordered.enumerated() { slot[n.id] = s }
         }
 
-        return nodes.map { (node: $0, column: column[$0.id] ?? 0, row: row[$0.id] ?? 0) }
+        return nodes.map { (node: $0, tier: tier[$0.id] ?? 0, slot: slot[$0.id] ?? 0) }
     }
 
-    private static func barycenter(_ id: String, _ parents: [String: [String]], _ row: [String: Int]) -> Double {
-        let rows = (parents[id] ?? []).compactMap { row[$0] }
-        guard !rows.isEmpty else { return .greatestFiniteMagnitude }
-        return Double(rows.reduce(0, +)) / Double(rows.count)
+    private static func barycenter(_ id: String, _ parents: [String: [String]], _ slot: [String: Int]) -> Double {
+        let slots = (parents[id] ?? []).compactMap { slot[$0] }
+        guard !slots.isEmpty else { return .greatestFiniteMagnitude }
+        return Double(slots.reduce(0, +)) / Double(slots.count)
     }
 }
 
@@ -298,6 +376,13 @@ enum LgtmGraphLayout {
 private struct Chip: View {
     let node: LgtmGraphNode
     let onTap: (() -> Void)?
+
+    /// Past this many pods the pips stop being countable at 5pt and start
+    /// being a texture, so the rest collapse into a "+N". The exact set is
+    /// never lost - `PodInspectSheet` (Cluster tab) and `PodBreakdown`
+    /// (Metrics tab) both already show every pod individually, which is why
+    /// this chip only has to say "how many, and are any unhappy".
+    private static let visiblePods = 14
 
     var body: some View {
         Group {
@@ -310,6 +395,7 @@ private struct Chip: View {
     }
 
     private var levelColor: Color { LgtmGraphView.color(node.level) }
+    private var productColor: Color { LgtmGraphView.productColor(node.product) }
 
     /// Clamped to 0...1 for GEOMETRY ONLY - this is the one place `saturation`
     /// is allowed to lose precision, because a `frame(width:)` past the
@@ -352,14 +438,48 @@ private struct Chip: View {
         return p > 1
     }
 
-    /// What the tooltip says for a present node - `node.detail`, plus the
-    /// exact (unclamped) peak reading when there is one to report.
+    /// What the tooltip says for a present node - `node.detail`, the exact
+    /// (unclamped) peak reading when there is one, and the pod count. Only
+    /// the pods that are actually unhappy get named: with 31 Alloy pods in a
+    /// metrics window, listing every name turns the tooltip into a wall, and
+    /// the full per-pod detail already lives in `PodInspectSheet` and the
+    /// per-pod bars on each tab's cards.
     private var presentHelpText: String {
-        guard let p = node.peakReplicaSaturation, p.isFinite else {
-            return "\(node.label) - \(node.detail)"
+        var parts = ["\(node.label) - \(node.detail)"]
+        if let p = node.peakReplicaSaturation, p.isFinite {
+            parts.append("busiest replica \(Int((max(p, 0) * 100).rounded()))%")
         }
-        let pct = Int((max(p, 0) * 100).rounded())
-        return "\(node.label) - \(node.detail) · busiest replica \(pct)%"
+        if !node.pods.isEmpty {
+            var pods = "\(node.pods.count) pod\(node.pods.count == 1 ? "" : "s")"
+            let unhappy = node.pods.filter { $0.level == .warn || $0.level == .critical }
+            if !unhappy.isEmpty { pods += " (" + unhappy.map(\.name).joined(separator: ", ") + ")" }
+            parts.append(pods)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// One mark per pod, coloured by that pod's own observed state - the
+    /// difference between "this component is a box" and "this component is
+    /// three copies, one of which is unhappy". Deliberately not a second
+    /// number: it is the cheapest thing that makes a node's replicas visible
+    /// without duplicating the per-pod detail that already has two homes.
+    @ViewBuilder
+    private var podPips: some View {
+        if !node.pods.isEmpty {
+            HStack(spacing: 3) {
+                ForEach(node.pods.prefix(Self.visiblePods), id: \.name) { pod in
+                    Circle()
+                        .fill(LgtmGraphView.color(pod.level).opacity(0.85))
+                        .frame(width: 5, height: 5)
+                }
+                if node.pods.count > Self.visiblePods {
+                    Text("+\(node.pods.count - Self.visiblePods)")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     private var content: some View {
@@ -385,24 +505,35 @@ private struct Chip: View {
                         .foregroundStyle(levelColor)
                 }
             }
-            Text(node.lane.rawValue)
+            // Product first, then lane: in a merged graph "which product"
+            // is the thing a reader is orienting by, and carrying it in the
+            // product hue as well as in words means the graph stays readable
+            // to someone who can't tell purple from blue.
+            Text(node.product.isEmpty ? node.lane.rawValue : "\(node.product) · \(node.lane.rawValue)")
                 .font(.system(size: 8, weight: .medium))
                 .textCase(.uppercase)
                 .kerning(0.4)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(productColor)
+                .lineLimit(1)
             Text(node.present ? node.detail : "not deployed")
                 .font(.caption2)
                 .fontWeight(node.present ? .regular : .semibold)
                 .foregroundStyle(node.present ? Color.secondary : Color.orange)
                 .lineLimit(2)
+            podPips
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 11)
+        .padding(.trailing, 8)
         .padding(.vertical, 6)
         .frame(width: LgtmGraphView.nodeW, height: LgtmGraphView.nodeH, alignment: .leading)
         .background(
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor))
+                    // The product tint. Low enough that the saturation fill
+                    // drawn over it still reads as the louder of the two -
+                    // category is context, load is the thing being reported.
+                    RoundedRectangle(cornerRadius: 8).fill(productColor.opacity(0.10))
                     // Saturation as a horizontal fill under the text, the
                     // same idea `HeadroomBar` uses for a usage bar: a
                     // bottleneck reads as a chip that's mostly coloured in,
@@ -440,6 +571,12 @@ private struct Chip: View {
                                 .offset(x: geo.size.width * peakFraction - 0.75)
                         }
                     }
+                    // The product stripe, drawn last so the saturation fill
+                    // can't swallow it. Rounded on the leading side only, so
+                    // it sits flush inside the chip's own corner radius.
+                    UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8)
+                        .fill(productColor)
+                        .frame(width: 4)
                 }
             }
         )
@@ -462,14 +599,17 @@ private struct Chip: View {
 // MARK: - Self-check
 
 #if DEBUG
-/// Covers the two properties that matter for a GUI, not just correctness:
-/// the tiering never hangs (the whole point of testing a cycle), and every
-/// node - including one with no edges at all, or a totally empty product -
-/// still gets placed somewhere rather than silently dropped or crashing.
+/// Covers the properties that matter for a GUI, not just correctness: the
+/// tiering never hangs (the whole point of testing a cycle), every node -
+/// including one with no edges at all - still gets placed somewhere rather
+/// than silently dropped, and the merged whole-stack graph the two tabs
+/// actually draw tiers into a shape that runs down the page instead of
+/// collapsing into one enormous row.
 extension LgtmGraphLayout {
     static func selfCheck() {
-        func node(_ id: String, lane: LgtmLane = .standalone) -> LgtmGraphNode {
-            LgtmGraphNode(id: id, label: id, detail: "", lane: lane, level: .unknown, saturation: nil, present: true)
+        func node(_ id: String, lane: LgtmLane = .standalone, product: String = "test") -> LgtmGraphNode {
+            LgtmGraphNode(id: id, product: product, label: id, detail: "", lane: lane,
+                          level: .unknown, saturation: nil, present: true)
         }
 
         assert(place(nodes: [], edges: []).isEmpty, "zero nodes must not crash")
@@ -478,8 +618,9 @@ extension LgtmGraphLayout {
         let chain = place(nodes: [node("a"), node("b"), node("c")],
                           edges: [LgtmFlowEdge(from: "a", to: "b", verb: "x"),
                                   LgtmFlowEdge(from: "b", to: "c", verb: "x")])
-        func col(_ id: String) -> Int { chain.first { $0.node.id == id }!.column }
-        assert(col("a") < col("b") && col("b") < col("c"), "a straight chain must strictly increase in column")
+        func chainTier(_ id: String) -> Int { chain.first { $0.node.id == id }!.tier }
+        assert(chainTier("a") < chainTier("b") && chainTier("b") < chainTier("c"),
+               "a straight chain must strictly increase in tier")
 
         // The safety property this whole function exists for: a cycle must
         // terminate, and must still place both nodes rather than dropping
@@ -495,15 +636,51 @@ extension LgtmGraphLayout {
         assert(selfLoop.count == 1)
 
         let noEdges = place(nodes: [node("w", lane: .write), node("r", lane: .read)], edges: [])
-        assert(Set(noEdges.map(\.column)).count == 2, "with zero edges, lane fallback must still separate write from read")
+        assert(Set(noEdges.map(\.tier)).count == 2, "with zero edges, lane fallback must still separate write from read")
 
         // A node with no edges at all, alongside a real chain, must not sit
-        // in column 0 next to genuine sources.
+        // in tier 0 next to genuine sources.
         let mixed = place(nodes: [node("a"), node("b"), node("iso")],
                           edges: [LgtmFlowEdge(from: "a", to: "b", verb: "x")])
-        let isoColumn = mixed.first { $0.node.id == "iso" }!.column
-        let bColumn = mixed.first { $0.node.id == "b" }!.column
-        assert(isoColumn > bColumn, "an edge-free node must shelve after the real flow, not crowd its front")
+        let isoTier = mixed.first { $0.node.id == "iso" }!.tier
+        let bTier = mixed.first { $0.node.id == "b" }!.tier
+        assert(isoTier > bTier, "an edge-free node must shelve after the real flow, not crowd its front")
+
+        // The merged, whole-stack graph these two tabs actually draw: every
+        // node of every product in one placement, built from the real edge
+        // table rather than a toy one, since the properties that matter
+        // (products keeping their relative tiering, cross-product seams
+        // tiering ahead of what they feed) are properties of THAT data.
+        let mergedEdges = LgtmTopology.allEdges
+        let mergedIDs = Set(mergedEdges.flatMap { [$0.from, $0.to] }).sorted()
+        let merged = place(nodes: mergedIDs.map { node($0, product: LgtmTopology.product(forNodeID: $0)) },
+                           edges: mergedEdges)
+        assert(merged.count == mergedIDs.count, "every merged node must be placed")
+        var mergedTier: [String: Int] = [:]
+        for p in merged { mergedTier[p.node.id] = p.tier }
+        // Vertical means every edge runs strictly down the page. This is the
+        // one property a reader relies on to follow the flow at all.
+        for e in mergedEdges {
+            assert((mergedTier[e.from] ?? 0) < (mergedTier[e.to] ?? 0),
+                   "merged edge \(e.from) -> \(e.to) must run down the page")
+        }
+        // Each product keeps its own relative order inside the merged graph.
+        assert(mergedTier["mimir/nginx"]! < mergedTier["mimir/distributor"]!)
+        assert(mergedTier["mimir/distributor"]! < mergedTier["mimir/ingester"]!)
+        assert(mergedTier["loki/gateway"]! < mergedTier["loki/ingester"]!)
+        assert(mergedTier["tempo/distributor"]! < mergedTier["tempo/compactor"]!)
+        // The cross-product seams - the whole reason for merging - tier ahead
+        // of every product they feed or read.
+        for target in ["mimir/distributor", "loki/distributor", "tempo/distributor"] {
+            assert(mergedTier["alloy"]! < mergedTier[target]!, "alloy must tier ahead of \(target)")
+        }
+        for target in ["mimir/query-frontend", "loki/query-frontend", "tempo/query-frontend"] {
+            assert(mergedTier["grafana"]! < mergedTier[target]!, "grafana must tier ahead of \(target)")
+        }
+        // Neither degenerate shape: not one enormous row, not one enormous
+        // column. Three products' worth of chains genuinely interleave.
+        assert(Set(merged.map(\.tier)).count >= 6, "the merged stack must be deep, not one enormous row")
+        assert(Set(merged.map(\.slot)).count >= 4, "the merged stack must be wide, not one enormous column")
     }
 }
 #endif
