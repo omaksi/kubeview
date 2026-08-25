@@ -22,6 +22,12 @@ struct OverviewView: View {
     @EnvironmentObject var store: ClusterStore
     @EnvironmentObject var search: SearchState
 
+    /// Nodes shown before the list collapses. The overview is a summary and
+    /// NodesView holds the full list, so a cluster with dozens of nodes must
+    /// not push the namespace grid off the screen.
+    private static let collapsedNodeCount = 12
+    @State private var showAllNodes = false
+
     var body: some View {
         if search.isActive {
             GlobalSearchResultsView()
@@ -75,21 +81,41 @@ struct OverviewView: View {
         }
     }
 
+    /// Not-ready nodes are never collapsed away. Hiding a broken node behind a
+    /// "show more" is the one thing this panel must not do, so the cap only
+    /// ever trims healthy ones.
+    private var visibleNodes: [NodeUsage] {
+        if showAllNodes { return store.nodeUsage }
+        let unready = store.nodeUsage.filter { !$0.ready }
+        let ready = store.nodeUsage.filter(\.ready)
+        return unready + ready.prefix(max(0, Self.collapsedNodeCount - unready.count))
+    }
+
     private var nodesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Nodes", trailing: store.metricsAvailable ? nil : "metrics-server unavailable")
+            SectionHeader(title: "Nodes",
+                          trailing: store.metricsAvailable
+                              ? "\(store.nodesReady)/\(store.nodes.count) ready"
+                              : "metrics-server unavailable")
 
             if store.metricsAvailable {
                 clusterTotals
             }
 
-            VStack(spacing: 6) {
-                ForEach(store.nodeUsage) { node in
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 8)], spacing: 8) {
+                ForEach(visibleNodes) { node in
                     NodeUsageRow(node: node, showMetrics: store.metricsAvailable)
                 }
-                if store.nodeUsage.isEmpty {
-                    Text("No nodes").foregroundStyle(.secondary).font(.caption)
+            }
+            if store.nodeUsage.isEmpty {
+                Text("No nodes").foregroundStyle(.secondary).font(.caption)
+            }
+            if store.nodeUsage.count > Self.collapsedNodeCount {
+                Button(showAllNodes ? "Show fewer" : "Show all \(store.nodeUsage.count) nodes") {
+                    withAnimation(.easeInOut(duration: 0.15)) { showAllNodes.toggle() }
                 }
+                .buttonStyle(.link)
+                .font(.caption)
             }
         }
     }
@@ -121,39 +147,78 @@ struct OverviewView: View {
     }
 }
 
+/// Deliberately compact: the overview shows every node at once, so each gets a
+/// name line and two thin bars rather than `UsageBar`'s label + "used / total"
+/// pair, which is what made this section taller than everything below it.
+/// NodesView is where the full per-node detail lives.
 struct NodeUsageRow: View {
     let node: NodeUsage
     let showMetrics: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(node.ready ? Color.green : Color.red)
-                .frame(width: 8, height: 8)
-            Text(node.name)
-                .font(.system(.body, design: .monospaced))
-                .lineLimit(1)
-                .frame(maxWidth: 220, alignment: .leading)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(node.ready ? Color.green : Color.red)
+                    .frame(width: 7, height: 7)
+                Text(node.name)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(node.name)
+                Spacer(minLength: 0)
+            }
 
             if showMetrics {
-                UsageBar(label: "CPU",
-                         used: node.cpuUsedMillicores,
-                         total: node.cpuCapacityMillicores,
-                         format: { ResourceParser.formatMillicores($0) })
-                UsageBar(label: "Mem",
-                         used: node.memoryUsedBytes,
-                         total: node.memoryCapacityBytes,
-                         format: { ResourceParser.formatBytes($0) })
+                MiniUsageBar(label: "CPU", percent: node.cpuPercent / 100)
+                MiniUsageBar(label: "MEM", percent: node.memoryPercent / 100)
             } else {
-                Text("CPU cap: \(ResourceParser.formatMillicores(node.cpuCapacityMillicores))")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("Mem cap: \(ResourceParser.formatBytes(node.memoryCapacityBytes))")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
+                Text("\(ResourceParser.formatMillicores(node.cpuCapacityMillicores)) · \(ResourceParser.formatBytes(node.memoryCapacityBytes))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(10)
+        .padding(8)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// `UsageBar` at a glance: same 65%/85% grading, but the percentage replaces
+/// the "used / total" line so a node fits a grid cell instead of a full row.
+///
+/// Only `frame(width:)` clamps - the label prints the raw ratio, so a node over
+/// its capacity reads as such instead of pinning at 100%.
+struct MiniUsageBar: View {
+    let label: String
+    let percent: Double
+
+    private var clamped: Double { min(max(percent, 0), 1) }
+    private var color: Color {
+        if percent > 0.85 { return .red }
+        if percent > 0.65 { return .orange }
+        return .green
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2).fill(.quaternary)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color)
+                        .frame(width: geo.size.width * clamped)
+                }
+            }
+            .frame(height: 5)
+            Text("\(Int((percent * 100).rounded()))%")
+                .font(.system(size: 9).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .trailing)
+        }
     }
 }
 

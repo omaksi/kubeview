@@ -14,7 +14,7 @@ this document is about `KubeView` specifically unless a section says otherwise.
 
 | Category | Resources |
 |---|---|
-| Cluster | Overview (k8s server version, stats, unhealthy, nodes, namespaces grid), Events (lazy-load, warnings-only toggle, involved object surfaced), Namespaces (with drill-down + star + dim-when-empty), Nodes |
+| Cluster | Overview (k8s server version, stats, unhealthy, condensed node grid capped at 12 with show-all, namespaces grid), Events (lazy-load, warnings-only toggle, involved object surfaced), Namespaces (with drill-down + star + dim-when-empty), Nodes |
 | Workloads | Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods (with Overview/Logs/Describe tabs), HPAs |
 | Network | Services, Ingresses (clickable URLs open in browser), NetworkPolicies |
 | Storage | PVCs, StorageClasses (with `is-default-class` annotation) |
@@ -27,7 +27,7 @@ this document is about `KubeView` specifically unless a section says otherwise.
 - **Multi-cluster**: `ClusterManager` supervises a `ClusterStore` per active context; each has its own refresh loop. No kubeconfig mutation — every kubectl call uses `--context`. Active contexts and selection persist via `UserDefaults`.
 - **Tabs** (`TabStore` + `TabStripView`): a window holds multiple tabs, each a `WorkspaceTab` carrying its own context *and* namespace, plus which sidebar view it was showing - so two tabs on the same cluster can look at different namespaces without disturbing each other. `TabStore` owns the tab list, ordering and focus, persisted so the workspace survives a relaunch. Only the focused tab's cluster polls at the normal 5s cadence (`ClusterStore.goLive()`); every other open tab's cluster gets a cheap 60s health-only probe (`goBackground()`) instead of the full refresh batch, and a cluster with no tab left open at all is stopped and evicted (`ClusterManager.applyCadence`, driven by `TabStore.openContexts` and the active tab).
 - **The app's selection is its own, and must stay that way.** The rule is not "read the ambient context once" - it is **the ambient context may seed an initial choice, but must never route a request.** Every kubectl call carries an explicit `--context`; `KubectlService(context:)`'s nil default is the enforcement point (see Design rules). Three sites legitimately read `kubectl config current-context` as a first-run bootstrap heuristic, never again after: `KubeViewKit/ClusterManager.swift:39` (seeds the cluster list), `KubeViewKit/KubeViewScenes.swift:104` (seeds which tab opens first), `LgtmViewKit/LgtmViewScenes.swift:110` (seeds the standalone LGTM app's initial context). The LGTM app's version is the interesting one: it deliberately restricts the read to first-run-only, the same restriction `ClusterManager` places on itself, so its selection does not later follow whatever a terminal's `kubectl use-context` last set. In `ClusterManager`, `bootstrap()` must call `persistActive()` before returning: it activates with `persist: false`, so without that call an untouched install never writes `kubeview.activeContexts`, falls into the seed branch on *every* launch, and silently follows the terminal instead. That was a real bug - it hides as soon as the user adds or removes a cluster by hand, which is what makes it easy to misdiagnose.
-- **Namespace filter** (`ClusterStore.namespaceFilter` + `NamespacePicker`): pop-up in the top bar between the cluster pills and the search box, always visible. `nil` = All Namespaces, which is the default. Selecting one scopes every namespaced list view — pods, all workload kinds, services, ingresses, network policies, PVCs, configmaps, secrets, service accounts/IRSA, HPAs, cluster events and the cross-resource search results — via `Collection.inNamespace(_:_:)`. Cluster-scoped kinds (nodes, storage classes, the Namespaces list) and the cluster-wide summaries (Overview stats/grid, Linkerd mesh coverage) are untouched by design.
+- **Namespace scope** (`ClusterStore.namespaceFilter` + `NamespacePicker`): pop-up in the top bar between the cluster pills and the search box, always visible. It is always exactly one namespace - there is no "all namespaces" entry - defaulting to whatever the kubeconfig sets for that context, or `default`. The selected one scopes every namespaced list view — pods, all workload kinds, services, ingresses, network policies, PVCs, configmaps, secrets, service accounts/IRSA, HPAs, cluster events and the cross-resource search results — via `Collection.inNamespace(_:_:)`. Cluster-scoped kinds (nodes, storage classes, the Namespaces list) and the cluster-wide summaries (Overview stats/grid, Linkerd mesh coverage) are untouched by design.
 - **Resource graph** (`ResourceGraph` + `NamespaceGraphView`): namespace drill-down renders its resources as a directed graph, Argo-CD style. **No new kubectl calls** — `metadata.uid` and `metadata.ownerReferences` were always in the JSON kubectl returns, `ObjectMeta` just didn't decode them; Service→Pod is client-side selector matching, Ingress→Service and HPA→target come from fields already decoded. Layout is a **static tier table + one barycenter pass**, not a layering algorithm: columns are then made *dense*, so a namespace with no Ingress doesn't render an empty gutter. Pods past `fanOutCap` (15) under one owner collapse into a "+N more" node, matching how NamespaceCard shows 3 unhealthy workloads then a count. Pan/zoom is applied **once at the container** (`scaleEffect`/`offset` on the whole content) — per-node transforms would re-lay-out every node each gesture frame. Nodes are chips rather than `ResourceCard`: the card's hover state and emoji picker are far too heavy a few hundred times over. An **empty selector matches nothing** (`matches(selector:labels:)`), or every headless/edge Service would draw an edge to every pod in the namespace. `ResourceGraph` is pure — no SwiftUI, no I/O — so its `selfCheck` asserts are the whole test story, and it is the one place in this codebase where testing is straightforward and expected.
 - **Global search** (`SearchState` + `GlobalSearchBar`, ⌘F): top-of-window box, context-aware. On Overview it triggers `GlobalSearchResultsView` (groups hits across every resource kind, hides empty groups). On any list view it filters that view via `Collection.searchFiltered(_:_:)`.
 - **Health detection** (`Pod.healthState`): ImagePullBackOff / CrashLoopBackOff / ErrImagePull / CreateContainerConfigError / etc. surface as "failing" even when `phase=Pending`. Deployment/StatefulSet/DaemonSet/ReplicaSet/Job also report isHealthy via ready-vs-desired.
@@ -103,7 +103,7 @@ Sources/
 │   └── Views/
 │       ├── ContentView.swift             # NavigationSplitView + grouped sidebar (cluster-scoped groups + trailing App group); NavState; AppRoute; RefreshButton; ClusterBar/ClusterPill; NamespacePicker
 │       ├── TabStripView.swift            # The tab strip; each tab's status dot carries its lifecycle
-│       ├── OverviewView.swift            # Stat cards (incl. k8s server version), Unhealthy section, Nodes usage bars, NamespaceCard grid + NamespaceSort
+│       ├── OverviewView.swift            # Stat cards (incl. k8s server version), Unhealthy section, condensed Nodes grid (NodeUsageRow + MiniUsageBar), NamespaceCard grid + NamespaceSort
 │       ├── NamespacesView.swift          # List view (sorted via NamespaceSort); NamespaceCard defined in OverviewView
 │       ├── NamespaceDetailView.swift     # Drill-down: pods/services/ingresses scoped to ns
 │       ├── NamespaceGraphView.swift      # Canvas edges + chip nodes, container-level pan/zoom, expand/collapse, tap-to-navigate
@@ -271,13 +271,36 @@ plus two Swift gotchas it surfaced:
   full cluster refresh. Note it watches `~/.aws` only — SSO writes land in
   `~/.aws/sso/cache` and don't touch that directory, so they're picked up by
   the login completion handler instead.
-- **The namespace scope is the app's own, per context, and never written to
-  the kubeconfig.** `ClusterStore.namespaceFilter` is `nil` for all namespaces
-  and persists under `kubeview.namespaceFilter.<context>`. It is deliberately
-  not `kubectl config set-context --current --namespace`: that rewrites the
-  user's kubeconfig and follows them into every terminal, exactly the trap the
-  `use-context` rule exists to avoid. Each cluster keeps its own scope, so
-  switching pills switches scope with it.
+- **The scope is always exactly one namespace. There is no "all namespaces".**
+  `ClusterStore.namespaceFilter` is a plain `String`, matching `kubectl`, where
+  the scope is a single namespace and `--all-namespaces` is a per-command
+  opt-in rather than a mode you sit in. It persists under
+  `kubeview.namespaceFilter.<context>`.
+  When nothing is persisted for a context, `resolveNamespace()` adopts the one
+  the kubeconfig sets for it (`kubectl config view --minify`), falling back to
+  `ClusterStore.fallbackNamespace` (`default`) - kubectl's own resolution
+  order. It runs once per store and only while the user has not chosen a scope,
+  so it can never overwrite a real choice, and a kubeconfig it cannot read
+  costs a fallback scope rather than a broken one.
+  Reading the kubeconfig here is read-only, like every other call: it is
+  deliberately not `kubectl config set-context --current --namespace`, which
+  rewrites the user's kubeconfig and follows them into every terminal, exactly
+  the trap the `use-context` rule exists to avoid. Each cluster keeps its own
+  scope, so switching pills switches scope with it.
+  **`WorkspaceTab.namespace` needs its hand-written `init(from:)`.** It used to
+  be `String?`, and workspaces persisted by an older build carry a literal
+  `null`. Tabs decode as one array, so a single stale tab would throw and take
+  every other tab with it - the user would silently lose their whole workspace
+  on the first launch after upgrading. `WorkspaceTabDecodingTests` pins it.
+- **The Overview's node panel is a summary, and a collapse must never hide a
+  broken node.** It renders `NodeUsageRow` in an adaptive `LazyVGrid` capped at
+  `collapsedNodeCount` (12) with a show-all toggle, because one full-width row
+  per node buried the namespace grid on any real cluster. `visibleNodes` puts
+  **not-ready nodes first and never trims them** - the cap only ever drops
+  healthy ones, so "show all" can hide a count but never a fault. `NodesView`
+  is where the full per-node detail lives. `MiniUsageBar` clamps at
+  `frame(width:)` only, so a node over capacity reads past 100% instead of
+  pinning - the same producer/renderer rule as the LGTM view.
 - **Filtering happens per list view, not in `refresh()`.** Namespaced views
   chain `Collection.inNamespace(store.namespaceFilter, \.namespace)` before
   `searchFiltered`, the same way search is applied. Nothing about what is

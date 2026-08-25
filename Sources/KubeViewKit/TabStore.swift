@@ -11,13 +11,36 @@ import KubeUI
 struct WorkspaceTab: Identifiable, Hashable, Codable {
     var id: UUID = UUID()
     var context: String
-    /// nil = all namespaces.
-    var namespace: String?
+    /// Always a real namespace — there is no all-namespaces scope. A tab that
+    /// has not had its cluster's kubeconfig read yet carries the fallback, and
+    /// `ClusterStore.resolveNamespace` corrects it.
+    var namespace: String = ClusterStore.fallbackNamespace
     var view: NavSection = .overview
 
     /// Drill-down isn't restored across a tab switch — see TabStore's note.
     var title: String { context }
-    var subtitle: String { namespace ?? "All Namespaces" }
+    var subtitle: String { namespace }
+
+    init(context: String,
+         namespace: String = ClusterStore.fallbackNamespace,
+         view: NavSection = .overview) {
+        self.context = context
+        self.namespace = namespace
+        self.view = view
+    }
+
+    /// Hand-written because `namespace` used to be optional, and workspaces
+    /// persisted before that carry a literal `null` there. Synthesized
+    /// decoding would throw on it and take the *whole* tab list down with it,
+    /// so a relaunch after upgrading would silently wipe the user's tabs.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        context = try c.decode(String.self, forKey: .context)
+        namespace = try c.decodeIfPresent(String.self, forKey: .namespace)
+            ?? ClusterStore.fallbackNamespace
+        view = try c.decodeIfPresent(NavSection.self, forKey: .view) ?? .overview
+    }
 }
 
 /// Tabs, their order, and which one has focus. Persisted so the workspace
@@ -75,7 +98,7 @@ final class TabStore: ObservableObject {
         tabs.removeAll { !availableContexts.contains($0.context) }
         if tabs.isEmpty {
             let seed = current ?? availableContexts.first
-            if let seed { tabs = [WorkspaceTab(context: seed, namespace: nil)] }
+            if let seed { tabs = [WorkspaceTab(context: seed)] }
         }
         if activeID == nil || !tabs.contains(where: { $0.id == activeID }) {
             activeID = tabs.first?.id
@@ -101,7 +124,9 @@ final class TabStore: ObservableObject {
     }
 
     @discardableResult
-    func open(context: String, namespace: String? = nil, view: NavSection = .overview) -> UUID {
+    func open(context: String,
+              namespace: String = ClusterStore.fallbackNamespace,
+              view: NavSection = .overview) -> UUID {
         let tab = WorkspaceTab(context: context, namespace: namespace, view: view)
         if let i = activeIndex { tabs.insert(tab, at: i + 1) } else { tabs.append(tab) }
         activeID = tab.id
@@ -134,7 +159,7 @@ final class TabStore: ObservableObject {
         update(id) { $0.context = context }
     }
 
-    func setNamespace(_ namespace: String?, for id: UUID) {
+    func setNamespace(_ namespace: String, for id: UUID) {
         update(id) { $0.namespace = namespace }
     }
 

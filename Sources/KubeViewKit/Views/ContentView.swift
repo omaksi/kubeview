@@ -299,24 +299,16 @@ struct ContentView: View {
     }
 }
 
-/// The Graph nav item needs one namespace, and "All Namespaces" isn't one.
-/// Drawing every namespace at once is unreadable and slow, so this says what to
-/// do instead rather than rendering a hairball.
+/// The Graph nav item draws one namespace, which is now the only kind of scope
+/// there is — the "pick a namespace first" empty state this used to need went
+/// away with the all-namespaces option.
 /// ponytail: no multi-namespace mode. Add one if a cross-namespace view ever
 /// earns its keep — the builder already takes arbitrary slices.
 private struct NamespaceGraphRoot: View {
     @EnvironmentObject var store: ClusterStore
 
     var body: some View {
-        if let ns = store.namespaceFilter {
-            NamespaceGraphView(namespace: ns)
-        } else {
-            ContentUnavailableView {
-                Label("Pick a namespace", systemImage: "point.3.connected.trianglepath.dotted")
-            } description: {
-                Text("The graph draws one namespace at a time. Choose one from the Namespace picker.")
-            }
-        }
+        NamespaceGraphView(namespace: store.namespaceFilter)
     }
 }
 
@@ -550,12 +542,11 @@ struct NamespacePicker: View {
         HStack(spacing: 6) {
             Image(systemName: "square.stack.3d.up")
                 .font(.caption)
-                .foregroundStyle(store.namespaceFilter == nil ? Color.secondary : Color.accentColor)
+                .foregroundStyle(Color.accentColor)
             Picker("Namespace", selection: $store.namespaceFilter) {
-                Text("All Namespaces").tag(String?.none)
                 ForEach(ClusterStore.pickerOptions(store.namespaces.map(\.name),
                                                    selected: store.namespaceFilter), id: \.self) { ns in
-                    Text(ns).tag(String?.some(ns))
+                    Text(ns).tag(ns)
                 }
             }
             // ponytail: a plain pop-up menu. No type-ahead or search field —

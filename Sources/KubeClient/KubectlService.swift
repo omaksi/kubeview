@@ -69,6 +69,22 @@ public actor KubectlService {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    /// The namespace `kubectl` itself would act on for this service's context:
+    /// whatever the context sets in the kubeconfig, or `default` when it sets
+    /// none. `--minify` reduces the view to the `--context` `run` already
+    /// injects, so this answers for the cluster on screen rather than the
+    /// ambient current-context.
+    ///
+    /// Read-only, like every other call here - the app never runs
+    /// `config set-context --namespace`, which would rewrite the user's
+    /// kubeconfig and follow them into every terminal.
+    public func contextNamespace() async throws -> String {
+        let data = try await run(["config", "view", "--minify", "-o", "jsonpath={..namespace}"])
+        let ns = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return ns.isEmpty ? "default" : ns
+    }
+
     public func serverVersion() async throws -> String? {
         let data = try await run(["version", "-o", "json"])
         struct V: Decodable { let serverVersion: Inner?; struct Inner: Decodable { let gitVersion: String? } }

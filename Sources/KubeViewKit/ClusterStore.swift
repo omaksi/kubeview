@@ -101,14 +101,24 @@ final class ClusterStore: ObservableObject {
     @Published var serverVersion: String?
     @Published var lastError: String?
 
-    /// The namespace the UI is scoped to, or nil for all namespaces. Per
-    /// context — each cluster remembers its own — and deliberately *not*
+    /// The namespace the UI is scoped to. Always exactly one — there is no
+    /// "all namespaces" scope, matching `kubectl`, where the scope is a single
+    /// namespace and `--all-namespaces` is a per-command opt-in rather than a
+    /// mode you sit in.
+    ///
+    /// Per context — each cluster remembers its own — and deliberately *not*
     /// `kubectl config set-context --namespace`: that rewrites the user's
     /// kubeconfig and follows them into every terminal, the same trap
     /// `use-context` is.
-    @Published var namespaceFilter: String? {
+    @Published var namespaceFilter: String {
         didSet { UserDefaults.standard.set(namespaceFilter, forKey: Self.filterKey(context)) }
     }
+
+    /// True once `namespaceFilter` holds a real choice: either one the user
+    /// made and we persisted, or the kubeconfig's own namespace for this
+    /// context. Until then the filter is a placeholder that `resolveNamespace`
+    /// is free to overwrite.
+    private var namespaceResolved: Bool
     @Published var lastRefresh: Date?
     /// When the cheap reachability probe last ran. Separate from `lastRefresh`,
     /// which only moves when resources are actually fetched.
@@ -148,12 +158,24 @@ final class ClusterStore: ObservableObject {
     /// (secrets data, configmap data, service-account secrets).
     private let slowCycleRatio = 6  // → ~30s with 5s fast cadence
 
+    /// The scope every cluster starts at before its kubeconfig is read, and the
+    /// fallback for a context that names no namespace — the same one `kubectl`
+    /// falls back to.
+    /// `nonisolated` because `WorkspaceTab` is a plain struct and needs this as
+    /// a default argument, which a main-actor-isolated constant cannot supply.
+    nonisolated static let fallbackNamespace = "default"
+
     init(context: String) {
         self.context = context
         self.kubectl = KubectlService(context: context)
         // Property observers don't fire during init, so reading the saved
         // filter here can't immediately rewrite what it just read.
-        self.namespaceFilter = UserDefaults.standard.string(forKey: Self.filterKey(context))
+        let saved = UserDefaults.standard.string(forKey: Self.filterKey(context))
+        self.namespaceFilter = saved ?? Self.fallbackNamespace
+        // Only a persisted choice counts as resolved. Without a saved value the
+        // filter above is a placeholder, and `resolveNamespace` replaces it with
+        // whatever kubectl would have used.
+        self.namespaceResolved = saved != nil
         #if DEBUG
         Self.selfCheck()
         #endif
@@ -161,13 +183,31 @@ final class ClusterStore: ObservableObject {
 
     static func filterKey(_ context: String) -> String { "kubeview.namespaceFilter.\(context)" }
 
+    /// Adopt the kubeconfig's namespace for this context, once, and only while
+    /// the user has not chosen one themselves. Failing is fine and silent: the
+    /// placeholder is already a valid namespace, so a kubeconfig this cannot
+    /// read costs a fallback scope, never a broken one.
+    ///
+    /// Returns true when it actually adopted one, which is the caller's signal
+    /// that the scope was nobody's choice and a tab still holding the fallback
+    /// should follow it.
+    @discardableResult
+    func resolveNamespace() async -> Bool {
+        guard !namespaceResolved else { return false }
+        namespaceResolved = true
+        guard let ns = try? await kubectl.contextNamespace() else { return false }
+        namespaceFilter = ns
+        return true
+    }
+
     /// Options for the namespace picker: this cluster's namespaces, plus the
-    /// current selection when the cluster doesn't have it — a filter restored
+    /// current selection when the cluster doesn't have it — a scope restored
     /// from a previous launch, or one whose namespace was deleted, has to stay
-    /// listed rather than silently reading as "All Namespaces".
-    static func pickerOptions(_ names: [String], selected: String?) -> [String] {
+    /// listed rather than silently snapping to another namespace's data under
+    /// the old name.
+    static func pickerOptions(_ names: [String], selected: String) -> [String] {
         let sorted = names.sorted()
-        guard let selected, !sorted.contains(selected) else { return sorted }
+        guard !sorted.contains(selected) else { return sorted }
         return [selected] + sorted
     }
 
@@ -175,15 +215,15 @@ final class ClusterStore: ObservableObject {
     static func selfCheck() {
         struct Item { let namespace: String }
         let items = [Item(namespace: "a"), Item(namespace: "b"), Item(namespace: "a")]
-        assert(items.inNamespace(nil, \.namespace).count == 3)      // nil = all namespaces
         assert(items.inNamespace("a", \.namespace).count == 2)
         assert(items.inNamespace("gone", \.namespace).isEmpty)
         // Cluster-scoped kinds never route through the filter — they have no
         // namespace to match against in the first place.
         assert(ResourceRef.node("ip-10-0-0-1").namespace == nil)
         assert(ResourceRef.pod("kube-system", "coredns").namespace == "kube-system")
-        assert(pickerOptions(["b", "a"], selected: nil) == ["a", "b"])
         assert(pickerOptions(["b", "a"], selected: "a") == ["a", "b"])
+        // A scope the cluster no longer has stays listed and stays selected —
+        // dropping it would silently show another namespace's data.
         assert(pickerOptions(["b", "a"], selected: "gone") == ["gone", "a", "b"])
     }
     #endif
@@ -531,8 +571,9 @@ final class ClusterStore: ObservableObject {
 
 /// The namespace filter, applied the same way `searchFiltered` applies the
 /// search box: chained by each list view over the collection it renders.
-/// A nil filter means all namespaces. Cluster-scoped kinds (nodes, storage
-/// classes, the namespace list itself) have no namespace and never call this.
+/// The scope is always exactly one namespace — there is no all-namespaces
+/// value to pass. Cluster-scoped kinds (nodes, storage classes, the namespace
+/// list itself) have no namespace and never call this.
 ///
 /// ponytail: applied per list view rather than centrally in `refresh()`. The
 /// cluster-wide surfaces stay cluster-wide on purpose — Overview's stats and
@@ -540,8 +581,7 @@ final class ClusterStore: ObservableObject {
 /// answers about the whole cluster, and scoping them to one namespace would
 /// make them lie.
 extension Collection {
-    func inNamespace(_ namespace: String?, _ key: KeyPath<Element, String>) -> [Element] {
-        guard let namespace else { return Array(self) }
+    func inNamespace(_ namespace: String, _ key: KeyPath<Element, String>) -> [Element] {
         return filter { $0[keyPath: key] == namespace }
     }
 }

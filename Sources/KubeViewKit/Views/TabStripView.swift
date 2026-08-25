@@ -255,10 +255,11 @@ struct ContextBar: View {
                 .foregroundStyle(.tertiary)
 
             Picker("Namespace", selection: namespaceBinding) {
-                Text("All Namespaces").tag(String?.none)
-                ForEach(ClusterStore.pickerOptions(store.namespaces.map(\.name),
-                                                   selected: tabs.active?.namespace), id: \.self) { ns in
-                    Text(ns).tag(String?.some(ns))
+                ForEach(ClusterStore.pickerOptions(
+                    store.namespaces.map(\.name),
+                    selected: tabs.active?.namespace ?? ClusterStore.fallbackNamespace
+                ), id: \.self) { ns in
+                    Text(ns).tag(ns)
                 }
             }
             .labelsHidden()
@@ -292,9 +293,9 @@ struct ContextBar: View {
     /// Namespace is a filter on a connection we already have, so it never
     /// re-applies cadence. It writes through to the store because every list
     /// view reads `store.namespaceFilter`.
-    private var namespaceBinding: Binding<String?> {
+    private var namespaceBinding: Binding<String> {
         Binding(
-            get: { tabs.active?.namespace },
+            get: { tabs.active?.namespace ?? ClusterStore.fallbackNamespace },
             set: { ns in
                 guard let id = tabs.activeID else { return }
                 tabs.setNamespace(ns, for: id)

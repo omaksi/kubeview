@@ -108,14 +108,28 @@ struct RootView: View {
                                  live: tabs.active?.context)
             // The focused tab's namespace has to reach the store, which is what
             // every list view actually filters on.
-            if let tab = tabs.active {
-                manager.stores[tab.context]?.namespaceFilter = tab.namespace
-            }
+            await syncNamespace(tabs: tabs, manager: manager)
         }
         .onChange(of: tabs.activeID) { _, _ in
-            guard let tab = tabs.active else { return }
-            manager.stores[tab.context]?.namespaceFilter = tab.namespace
+            Task { await syncNamespace(tabs: tabs, manager: manager) }
         }
+    }
+}
+
+/// Point the focused tab and its store at the same namespace.
+///
+/// The tab normally wins - it is where "this tab is looking at kube-system"
+/// lives, and two tabs on one cluster are allowed to differ. The exception is a
+/// cluster nobody has scoped yet: `resolveNamespace` reports that it adopted
+/// the kubeconfig's own namespace, and the tab follows rather than dragging the
+/// scope back to the fallback it was seeded with.
+@MainActor
+private func syncNamespace(tabs: TabStore, manager: ClusterManager) async {
+    guard let tab = tabs.active, let store = manager.stores[tab.context] else { return }
+    if await store.resolveNamespace() {
+        tabs.setNamespace(store.namespaceFilter, for: tab.id)
+    } else {
+        store.namespaceFilter = tab.namespace
     }
 }
 
