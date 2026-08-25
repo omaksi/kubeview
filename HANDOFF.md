@@ -106,7 +106,7 @@ Everything from the original plan shipped on 2026-08-24. `v0.4.0` and
 `kubectl-lgtm-v0.2.0` are released, all three Homebrew packages are published
 and were installed from a clean tap and verified.
 
-**Only two things remain:**
+**Only one thing remains:**
 
 1. **Archive `omaksi/kubectl-lgtm`.** Its history is pushed and the README
    carries a moved-to notice. Do it last - an archived repo is fully read-only:
@@ -114,10 +114,12 @@ and were installed from a clean tap and verified.
    curl -s -X PATCH -H "Authorization: Bearer <PAT>" \
      -d '{"archived":true}' https://api.github.com/repos/omaksi/kubectl-lgtm
    ```
-2. **Clean up 31 repos under `~/GitLab/`** that carry a GitLab token in
-   plaintext in `.git/config`. Same pattern as the GitHub one, different token.
-   Verify against a PRIVATE repo before stripping any URL - see the credentials
-   section above for why that check is the whole ballgame.
+
+The 31 `~/GitLab/` repos that carried a GitLab token in plaintext were cleaned
+up on 2026-08-25. That token was **already** in the login keychain and working,
+so the embedded URLs were pure redundancy. Every one of the 31 clean URLs was
+authenticated against the keychain **before** anything was stripped - the
+inverse of the mistake that destroyed the GitHub PAT.
 
 Also worth doing: **revoke the old GitHub PAT**. It sat in plaintext in three
 config files for months and is now unreadable everywhere, so it is pure
